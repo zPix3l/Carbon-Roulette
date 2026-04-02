@@ -2,8 +2,8 @@ import type { Project } from '../projects/generator.js';
 import type { Player, Bet } from '../db/queries.js';
 import { getStreakMultiplier } from './scoring.js';
 
-// URL for the "LEARN" button — explains carbon credits, the game, what to look for
-export const LEARN_URL = 'https://telegra.ph/Carbon-Roulette--Rules--How-to-Play-04-02';
+// URL for the "LEARN" button — player-facing guide with storytelling, rules, and reference tables
+export const LEARN_URL = 'https://telegra.ph/Carbon-Roulette--How-to-Play-04-02';
 
 // ---- Method emoji lookup ----
 
