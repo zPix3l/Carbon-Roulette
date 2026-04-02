@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "mockups",
+      "runtimeExecutable": "/usr/local/bin/node",
+      "runtimeArgs": ["-e", "const http=require('http'),fs=require('fs'),path=require('path');http.createServer((req,res)=>{const f=path.join('/Volumes/HomeX/Users/Ternoa/_DEV/__ZeroSpread/games/Carbon Roulette/scripts/mockups',req.url==='/'?'index.html':req.url);fs.readFile(f,(e,d)=>{if(e){res.writeHead(404);res.end('not found');}else{res.writeHead(200,{'Content-Type':'text/html'});res.end(d);}});}).listen(3847,()=>console.log('http://localhost:3847'))"],
+      "port": 3847
+    }
+  ]
+}
