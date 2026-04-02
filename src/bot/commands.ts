@@ -123,6 +123,52 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     await ctx.reply('✅ game reset to day 0. all bets cleared. player accounts intact.\nuse /drop to start a new game.');
   });
 
+  // /resetleaderboard — admin only: reset ALL players to starting balance, clear stats & bets
+  bot.command('resetleaderboard', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const arg = ctx.match?.trim();
+    if (arg !== 'CONFIRM') {
+      await ctx.reply('⚠️ this will reset ALL players to 1000 pts, clear all stats and bets.\n\ntype /resetleaderboard CONFIRM to proceed.');
+      return;
+    }
+    cancelAutoResolve();
+    database.prepare(`UPDATE players SET balance = ?, games_played = 0, wins = 0, current_streak = 0, best_streak = 0, last_bailout = NULL`).run(config.startingPoints);
+    database.prepare('DELETE FROM bets').run();
+    db.setState(database, 'current_day', '0');
+    db.setState(database, 'round_status', 'closed');
+    db.setState(database, 'last_resolution_date', '');
+    db.setState(database, 'last_drop_date', '');
+    db.setState(database, 'drop_message_id', '');
+    const count = db.getPlayerCount(database);
+    await ctx.reply(`✅ leaderboard reset. ${count} players back to ${config.startingPoints} pts. all bets and stats cleared. game back to day 0.`);
+  });
+
+  // /resetplayer @username — admin only: reset a single player to starting balance
+  bot.command('resetplayer', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const arg = ctx.match?.trim();
+    if (!arg) {
+      await ctx.reply('usage: /resetplayer @username or /resetplayer telegram_id');
+      return;
+    }
+    const target = arg.replace('@', '');
+    // Try by username first, then by telegram ID
+    let player = database.prepare(`SELECT * FROM players WHERE username = ?`).get(target) as any;
+    if (!player) {
+      const id = parseInt(target, 10);
+      if (!isNaN(id)) player = database.prepare(`SELECT * FROM players WHERE telegram_id = ?`).get(id) as any;
+    }
+    if (!player) {
+      await ctx.reply(`player "${arg}" not found.`);
+      return;
+    }
+    database.prepare(`UPDATE players SET balance = ?, games_played = 0, wins = 0, current_streak = 0, best_streak = 0, last_bailout = NULL WHERE telegram_id = ?`).run(config.startingPoints, player.telegram_id);
+    database.prepare(`DELETE FROM bets WHERE telegram_id = ?`).run(player.telegram_id);
+    await ctx.reply(`✅ @${player.username ?? player.telegram_id} reset to ${config.startingPoints} pts. stats and bets cleared.`);
+  });
+
   // ---- PLAYER COMMANDS ----
 
   // /start — handles both normal start AND deep links from group (start=play_X)
