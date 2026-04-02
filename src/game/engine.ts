@@ -1,4 +1,4 @@
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import type Database from 'better-sqlite3';
 import { config } from '../config.js';
 import * as db from '../db/queries.js';
@@ -8,6 +8,7 @@ import type { Project } from '../projects/generator.js';
 import { readFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { generateBannerPNG } from './banner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -125,10 +126,10 @@ export async function doResolve(bot: Bot, database: Database.Database): Promise<
     try {
       const betCount = db.getBetCountForDay(database, currentDay);
       const closedText = formatDropGroupClosed(project, betCount);
-      await bot.api.editMessageText(
+      await bot.api.editMessageCaption(
         config.groupChatId,
         parseInt(dropMsgId, 10),
-        closedText,
+        { caption: closedText },
       );
     } catch {
       // Message might not be editable anymore
@@ -186,7 +187,9 @@ export async function doDrop(bot: Bot, database: Database.Database): Promise<{ o
     .url('📚 LEARN', LEARN_URL);
 
   try {
-    const sent = await bot.api.sendMessage(config.groupChatId, dropMsg, {
+    const bannerBuf = await generateBannerPNG(config.resolveDelayMinutes);
+    const sent = await bot.api.sendPhoto(config.groupChatId, new InputFile(bannerBuf, 'banner.png'), {
+      caption: dropMsg,
       reply_markup: keyboard,
     });
     // Store message_id for verdict reply + live counter updates
@@ -265,11 +268,10 @@ export async function updateDropBetCount(bot: Bot, database: Database.Database):
     .url('📚 LEARN', LEARN_URL);
 
   try {
-    await bot.api.editMessageText(
+    await bot.api.editMessageCaption(
       config.groupChatId,
       parseInt(dropMsgId, 10),
-      updatedText,
-      { reply_markup: keyboard },
+      { caption: updatedText, reply_markup: keyboard },
     );
   } catch (err) {
     console.log('[bet counter] failed to update group message:', err);

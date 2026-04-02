@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    width: 800px;
+    height: 420px;
+    background: linear-gradient(135deg, #0a0f1a 0%, #0d1926 30%, #122a1a 70%, #0a1a0f 100%);
+    font-family: -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color: #e8e8e8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* Subtle grid pattern */
+  body::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(34, 197, 94, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34, 197, 94, 0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+  }
+
+  /* Glow effects */
+  .glow-green {
+    position: absolute;
+    width: 300px;
+    height: 300px;
+    background: radial-gradient(circle, rgba(34, 197, 94, 0.12) 0%, transparent 70%);
+    top: -80px;
+    right: -50px;
+    border-radius: 50%;
+  }
+  .glow-red {
+    position: absolute;
+    width: 250px;
+    height: 250px;
+    background: radial-gradient(circle, rgba(239, 68, 68, 0.08) 0%, transparent 70%);
+    bottom: -60px;
+    left: -30px;
+    border-radius: 50%;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    text-align: center;
+    padding: 40px;
+  }
+
+  .emoji-top {
+    font-size: 48px;
+    margin-bottom: 16px;
+    letter-spacing: 12px;
+  }
+
+  h1 {
+    font-size: 56px;
+    font-weight: 800;
+    letter-spacing: -1px;
+    margin-bottom: 4px;
+    background: linear-gradient(135deg, #ffffff 0%, #a8edbb 50%, #22c55e 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .subtitle {
+    font-size: 18px;
+    color: #6b8f7b;
+    font-weight: 500;
+    letter-spacing: 6px;
+    text-transform: uppercase;
+    margin-bottom: 32px;
+  }
+
+  .tagline {
+    font-size: 22px;
+    color: #c8d6cf;
+    font-weight: 400;
+    line-height: 1.6;
+    max-width: 550px;
+    margin: 0 auto 36px;
+  }
+
+  .tagline span.green { color: #4ade80; font-weight: 600; }
+  .tagline span.red { color: #f87171; font-weight: 600; }
+
+  .stats-row {
+    display: flex;
+    gap: 40px;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .stat {
+    text-align: center;
+  }
+
+  .stat-number {
+    font-size: 32px;
+    font-weight: 800;
+    color: #22c55e;
+  }
+
+  .stat-label {
+    font-size: 12px;
+    color: #5a7a6a;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-top: 2px;
+  }
+
+  .stat-divider {
+    width: 1px;
+    height: 40px;
+    background: rgba(34, 197, 94, 0.2);
+  }
+
+  .bottom-line {
+    font-size: 16px;
+    color: #4ade80;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    font-weight: 600;
+    margin-top: 8px;
+  }
+
+  /* Corner accents */
+  .corner {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    border: 2px solid rgba(34, 197, 94, 0.15);
+  }
+  .corner-tl { top: 20px; left: 20px; border-right: none; border-bottom: none; }
+  .corner-tr { top: 20px; right: 20px; border-left: none; border-bottom: none; }
+  .corner-bl { bottom: 20px; left: 20px; border-right: none; border-top: none; }
+  .corner-br { bottom: 20px; right: 20px; border-left: none; border-top: none; }
+</style>
+</head>
+<body>
+  <div class="glow-green"></div>
+  <div class="glow-red"></div>
+  <div class="corner corner-tl"></div>
+  <div class="corner corner-tr"></div>
+  <div class="corner corner-bl"></div>
+  <div class="corner corner-br"></div>
+
+  <div class="container">
+    <div class="emoji-top">🌱</div>
+    <h1>Carbon Roulette</h1>
+    <div class="subtitle">Due Diligence Game</div>
+    <div class="tagline">
+      A carbon credit project drops. You decide:<br>
+      <span class="green">legit</span> or <span class="red">scam</span>?
+    </div>
+    <div class="bottom-line">Starts Friday · 11:00 UTC</div>
+  </div>
+</body>
+</html>
