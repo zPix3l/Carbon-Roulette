@@ -501,8 +501,8 @@ function generateFraudDescription(p: Project): { description: string; explanatio
   const options = patterns[p.method] ?? patterns.REDD;
   // Use counter to avoid duplicate fraud descriptions for same method
   if (!fraudDescCounters[p.method]) fraudDescCounters[p.method] = 0;
-  const idx = fraudDescCounters[p.method] % options.length;
-  fraudDescCounters[p.method]++;
+  const idx = fraudDescCounters[p.method]! % options.length;
+  fraudDescCounters[p.method]!++;
   return options[idx];
 }
 

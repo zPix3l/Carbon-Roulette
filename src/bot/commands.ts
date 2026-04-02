@@ -87,6 +87,42 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     await ctx.reply(`resolve: ${resolveResult.message}\ndrop: ${dropResult.message}`);
   });
 
+  // /setday N — admin only: force game to a specific day (does NOT drop or resolve)
+  bot.command('setday', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const arg = ctx.match?.trim();
+    const day = parseInt(arg ?? '', 10);
+    if (isNaN(day) || day < 0 || day > 30) {
+      await ctx.reply('usage: /setday N (0-30). 0 = before game starts.');
+      return;
+    }
+    cancelAutoResolve();
+    db.setState(database, 'current_day', String(day));
+    db.setState(database, 'round_status', 'closed');
+    await ctx.reply(`⚠️ game state forced to day ${day}. use /drop to open the next round.`);
+  });
+
+  // /resetgame — admin only: reset game state but KEEP players and leaderboard
+  bot.command('resetgame', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const arg = ctx.match?.trim();
+    if (arg !== 'CONFIRM') {
+      await ctx.reply('⚠️ this will reset the game to day 0 and delete all bets.\nplayer accounts and balances are PRESERVED.\n\ntype /resetgame CONFIRM to proceed.');
+      return;
+    }
+    cancelAutoResolve();
+    db.setState(database, 'current_day', '0');
+    db.setState(database, 'round_status', 'closed');
+    db.setState(database, 'last_resolution_date', '');
+    db.setState(database, 'last_drop_date', '');
+    db.setState(database, 'drop_message_id', '');
+    // Delete all bets but keep players
+    database.prepare('DELETE FROM bets').run();
+    await ctx.reply('✅ game reset to day 0. all bets cleared. player accounts intact.\nuse /drop to start a new game.');
+  });
+
   // ---- PLAYER COMMANDS ----
 
   // /start — handles both normal start AND deep links from group (start=play_X)
