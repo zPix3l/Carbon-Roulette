@@ -123,25 +123,24 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     await ctx.reply('✅ game reset to day 0. all bets cleared. player accounts intact.\nuse /drop to start a new game.');
   });
 
-  // /resetleaderboard — admin only: reset ALL players to starting balance, clear stats & bets
+  // /resetleaderboard — admin only: DELETE all players, clear bets, full clean slate
   bot.command('resetleaderboard', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
     const arg = ctx.match?.trim();
     if (arg !== 'CONFIRM') {
-      await ctx.reply('⚠️ this will reset ALL players to 1000 pts, clear all stats and bets.\n\ntype /resetleaderboard CONFIRM to proceed.');
+      await ctx.reply('⚠️ this will DELETE all players from the leaderboard, clear all bets, and reset the game to day 0.\neveryone will need to /play again.\n\ntype /resetleaderboard CONFIRM to proceed.');
       return;
     }
     cancelAutoResolve();
-    database.prepare(`UPDATE players SET balance = ?, games_played = 0, wins = 0, current_streak = 0, best_streak = 0, last_bailout = NULL`).run(config.startingPoints);
     database.prepare('DELETE FROM bets').run();
+    database.prepare('DELETE FROM players').run();
     db.setState(database, 'current_day', '0');
     db.setState(database, 'round_status', 'closed');
     db.setState(database, 'last_resolution_date', '');
     db.setState(database, 'last_drop_date', '');
     db.setState(database, 'drop_message_id', '');
-    const count = db.getPlayerCount(database);
-    await ctx.reply(`✅ leaderboard reset. ${count} players back to ${config.startingPoints} pts. all bets and stats cleared. game back to day 0.`);
+    await ctx.reply('✅ full reset. all players deleted, leaderboard empty, game back to day 0. everyone starts fresh with /play.');
   });
 
   // /resetplayer @username — admin only: reset a single player to starting balance
