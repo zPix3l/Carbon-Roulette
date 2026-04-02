@@ -3,7 +3,7 @@ import type { Player, Bet } from '../db/queries.js';
 import { getStreakMultiplier } from './scoring.js';
 
 // URL for the "LEARN" button — explains carbon credits, the game, what to look for
-export const LEARN_URL = 'https://bigwater.io/carbon-roulette';
+export const LEARN_URL = 'https://telegra.ph/Carbon-Roulette--Rules--How-to-Play-04-02';
 
 // ---- Method emoji lookup ----
 
