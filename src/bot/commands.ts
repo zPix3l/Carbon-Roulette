@@ -29,7 +29,10 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
   // Log chat ID for setup
   bot.use(async (ctx, next) => {
     if (ctx.chat && ctx.chat.type !== 'private') {
-      console.log(`[group detected] chat_id: ${ctx.chat.id} | type: ${ctx.chat.type} | title: ${(ctx.chat as any).title ?? '?'}`);
+      const title = (ctx.chat as any).title ?? '?';
+      console.log(`[group detected] chat_id: ${ctx.chat.id} | type: ${ctx.chat.type} | title: ${title}`);
+      // Persist group title for /groups display
+      db.setGroupState(database, ctx.chat.id, 'group_title', title);
     }
     await next();
   });
@@ -198,16 +201,17 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       lines.push('', 'no groups yet. use the button below in a group to add one.');
     } else {
       for (const g of groups) {
+        const title = db.getGroupState(database, g.group_id, 'group_title') || String(g.group_id);
         const active = g.group_id === config.groupChatId ? ' ✅' : '';
         const roundStatus = db.getGroupState(database, g.group_id, 'round_status') || 'idle';
         const statusEmoji = roundStatus === 'open' ? '🟢' : roundStatus === 'closed' ? '🔒' : '⏸';
-        lines.push(`${statusEmoji} ${g.group_id}${active}`);
+        lines.push(`${statusEmoji} ${title}${active}`);
         lines.push(`   day ${g.current_day}/30 · ${g.players} players`);
 
-        const label = g.group_id === config.groupChatId
-          ? `✅ ${g.group_id} (active)`
-          : `→ Switch to ${g.group_id}`;
-        keyboard.text(label, `switchgroup:${g.group_id}`).row();
+        const btnLabel = g.group_id === config.groupChatId
+          ? `✅ ${title} (active)`
+          : `→ ${title}`;
+        keyboard.text(btnLabel, `switchgroup:${g.group_id}`).row();
       }
     }
 

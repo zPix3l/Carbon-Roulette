@@ -51,10 +51,11 @@ export function registerCallbacks(bot: Bot, database: Database.Database): void {
     db.setBotConfig(database, 'group_chat_id', String(newGroupId));
     const day = db.getCurrentDay(database, newGroupId);
     const players = db.getPlayerCount(database, newGroupId);
+    const title = db.getGroupState(database, newGroupId, 'group_title') || String(newGroupId);
 
-    await ctx.answerCallbackQuery({ text: `switched to ${newGroupId}` });
+    await ctx.answerCallbackQuery({ text: `switched to ${title}` });
     await ctx.editMessageText(
-      `✅ active group: ${newGroupId}\nday ${day}/30 · ${players} players`,
+      `✅ active group: ${title}\nday ${day}/30 · ${players} players`,
     );
   });
 
