@@ -7,7 +7,7 @@ import { getProjectByDay, doResolve, doDrop, cancelAutoResolve } from '../game/e
 import { generateBannerPNG } from '../game/banner.js';
 import {
   formatStart, formatHelp, formatPortfolio, formatLeaderboard,
-  formatBailout, formatDrop, formatGoToDM, formatAnnouncement,
+  formatBailout, formatDrop, formatGoToDM, formatAnnouncement, LEARN_URL,
 } from '../game/messages.js';
 
 function extractUser(ctx: { from?: { id: number; username?: string; first_name?: string } }) {
@@ -180,8 +180,10 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       return;
     }
     const bannerBuf = await generateBannerPNG(config.resolveDelayMinutes);
+    const keyboard = new InlineKeyboard().url('📚 LEARN', LEARN_URL);
     await bot.api.sendPhoto(config.groupChatId, new InputFile(bannerBuf, 'banner.png'), {
       caption: formatAnnouncement(arg),
+      reply_markup: keyboard,
     });
     await ctx.reply('✅ announcement posted to the group.');
   });

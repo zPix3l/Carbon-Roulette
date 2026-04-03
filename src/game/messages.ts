@@ -321,6 +321,8 @@ export function formatAnnouncement(nextDrop: string): string {
     `🏆 30 rounds — top players win`,
     ``,
     `First drop: ${nextDrop}`,
+    ``,
+    `👇 Check how it works before the first round`,
   ].join('\n');
 }
 
