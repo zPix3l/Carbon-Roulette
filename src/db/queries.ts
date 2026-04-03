@@ -195,6 +195,21 @@ export function getCurrentDay(db: Database.Database, groupId: number): number {
   return parseInt(getGroupState(db, groupId, 'current_day'), 10) || 0;
 }
 
+/** List all known group IDs (any group that has at least one group_state or group_players row). */
+export function getKnownGroups(db: Database.Database): { group_id: number; current_day: number; players: number }[] {
+  return db.prepare(`
+    SELECT g.group_id,
+           COALESCE((SELECT value FROM group_state WHERE group_id = g.group_id AND key = 'current_day'), '0') as current_day,
+           (SELECT COUNT(*) FROM group_players WHERE group_id = g.group_id) as players
+    FROM (
+      SELECT DISTINCT group_id FROM group_players
+      UNION
+      SELECT DISTINCT group_id FROM group_state
+    ) g
+    ORDER BY players DESC
+  `).all() as { group_id: number; current_day: number; players: number }[];
+}
+
 // ---- Global bot config (not per-group) ----
 
 export function getBotConfig(db: Database.Database, key: string): string {

@@ -37,9 +37,16 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
   // ---- ADMIN COMMANDS ----
 
   // /drop — admin only: publish next project to the group
+  // If sent in a group, auto-switches to that group first.
   bot.command('drop', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
+    // R7: auto-detect group
+    if (ctx.chat && ctx.chat.type !== 'private' && ctx.chat.id !== config.groupChatId) {
+      config.groupChatId = ctx.chat.id;
+      db.setBotConfig(database, 'group_chat_id', String(ctx.chat.id));
+      await ctx.reply(`⚡ group switched to ${ctx.chat.id}`);
+    }
     const result = await doDrop(bot, database);
     await ctx.reply(result.message);
   });
@@ -176,6 +183,26 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     // Delete bets for this player in this group
     database.prepare(`DELETE FROM bets WHERE telegram_id = ? AND group_id = ?`).run(player.telegram_id, g);
     await ctx.reply(`✅ @${player.username ?? player.telegram_id} reset to ${config.startingPoints} pts in this group. stats and bets cleared.`);
+  });
+
+  // /groups — admin only: list all known groups with their state
+  bot.command('groups', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const groups = db.getKnownGroups(database);
+    if (groups.length === 0) {
+      await ctx.reply('no groups found.');
+      return;
+    }
+    const lines = ['📋 known groups:', ''];
+    for (const g of groups) {
+      const active = g.group_id === config.groupChatId ? ' ← active' : '';
+      const roundStatus = db.getGroupState(database, g.group_id, 'round_status') || 'idle';
+      const statusEmoji = roundStatus === 'open' ? '🟢' : roundStatus === 'closed' ? '🔒' : '⏸';
+      lines.push(`${statusEmoji} ${g.group_id}${active}`);
+      lines.push(`   day ${g.current_day}/30 · ${g.players} players`);
+    }
+    await ctx.reply(lines.join('\n'));
   });
 
   // /setgroup — admin only: set target group from current chat or by ID
