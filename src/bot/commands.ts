@@ -169,14 +169,19 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     await ctx.reply(`✅ @${player.username ?? player.telegram_id} reset to ${config.startingPoints} pts. stats and bets cleared.`);
   });
 
-  // /announcement — admin only: post game teaser with banner to the group (one-time)
+  // /announcement <datetime> — admin only: post game teaser with banner to the group
+  // e.g. /announcement Friday 11:00 UTC
   bot.command('announcement', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
-    const botInfo = await bot.api.getMe();
+    const arg = ctx.match?.trim();
+    if (!arg) {
+      await ctx.reply('usage: /announcement Friday 11:00 UTC');
+      return;
+    }
     const bannerBuf = await generateBannerPNG(config.resolveDelayMinutes);
     await bot.api.sendPhoto(config.groupChatId, new InputFile(bannerBuf, 'banner.png'), {
-      caption: formatAnnouncement(botInfo.username),
+      caption: formatAnnouncement(arg),
     });
     await ctx.reply('✅ announcement posted to the group.');
   });

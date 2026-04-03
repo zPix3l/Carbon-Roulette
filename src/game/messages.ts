@@ -308,13 +308,10 @@ export function formatStart(balance: number): string {
 
 // ---- Announcement (one-time teaser for the group) ----
 
-export function formatAnnouncement(botUsername: string): string {
+export function formatAnnouncement(nextDrop: string): string {
   return [
-    `🌱 Carbon Roulette is live.`,
+    `A carbon credit project drops in this chat. You have 1 hour to investigate the case file and decide: legit or scam?`,
     ``,
-    `A carbon credit project drops. You have 1 hour to investigate the case file and decide: legit or scam?`,
-    ``,
-    `→ Tap INVESTIGATE to open the case in DM`,
     `→ Study the numbers, spot the red flags`,
     `→ BUY if you trust it, PASS if you don't`,
     `→ Get it right, stack points. Get it wrong, lose them.`,
@@ -323,7 +320,7 @@ export function formatAnnouncement(botUsername: string): string {
     `⏱ 1 hour to decide per round`,
     `🏆 30 rounds — top players win`,
     ``,
-    `To join, DM @${botUsername} → /start`,
+    `First drop: ${nextDrop}`,
   ].join('\n');
 }
 
