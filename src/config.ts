@@ -23,4 +23,4 @@ export const config = {
   bailoutCooldownDays: envInt('BAILOUT_COOLDOWN_DAYS', 7),
   adminUserId: envInt('ADMIN_USER_ID', 0),
   resolveDelayMinutes: envInt('RESOLVE_DELAY_MINUTES', 60),
-} as const;
+};

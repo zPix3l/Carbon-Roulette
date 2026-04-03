@@ -1,6 +1,7 @@
 import { Bot } from 'grammy';
 import { config } from './config.js';
 import { initDb } from './db/schema.js';
+import { getState } from './db/queries.js';
 import { registerCommands } from './bot/commands.js';
 import { registerCallbacks } from './bot/callbacks.js';
 import { loadProjects } from './game/engine.js';
@@ -11,6 +12,13 @@ async function main() {
 
   const database = initDb();
   console.log(`database initialized`);
+
+  // Override group chat ID from DB if previously set via /setgroup
+  const savedGroup = getState(database, 'group_chat_id');
+  if (savedGroup) {
+    config.groupChatId = Number(savedGroup);
+    console.log(`group chat ID loaded from DB: ${config.groupChatId}`);
+  }
 
   const bot = new Bot(config.botToken);
 

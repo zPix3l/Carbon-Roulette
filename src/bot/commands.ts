@@ -169,6 +169,29 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     await ctx.reply(`✅ @${player.username ?? player.telegram_id} reset to ${config.startingPoints} pts. stats and bets cleared.`);
   });
 
+  // /setgroup — admin only: set target group from current chat or by ID
+  bot.command('setgroup', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const arg = ctx.match?.trim();
+    let newGroupId: number;
+    if (arg) {
+      newGroupId = Number(arg);
+      if (isNaN(newGroupId)) {
+        await ctx.reply('usage: /setgroup (in a group) or /setgroup <chat_id>');
+        return;
+      }
+    } else if (ctx.chat && ctx.chat.type !== 'private') {
+      newGroupId = ctx.chat.id;
+    } else {
+      await ctx.reply('usage: /setgroup (in a group) or /setgroup <chat_id>');
+      return;
+    }
+    config.groupChatId = newGroupId;
+    db.setState(database, 'group_chat_id', String(newGroupId));
+    await ctx.reply(`✅ group set to ${newGroupId}`);
+  });
+
   // /announcement <datetime> — admin only: post game teaser with banner to the group
   // e.g. /announcement Friday 11:00 UTC
   bot.command('announcement', async (ctx) => {
