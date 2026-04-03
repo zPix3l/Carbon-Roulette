@@ -272,14 +272,14 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     }
 
     const player = db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints);
-    const { allowed, reason } = canBailout(player.balance, player.last_bailout);
+    const { allowed, reason } = canBailout(player.balance);
     if (!allowed) {
       await ctx.reply(reason!);
       return;
     }
 
-    db.performBailout(database, user.userId, config.bailoutAmount);
-    await ctx.reply(formatBailout(config.bailoutAmount));
+    db.performBailout(database, user.userId, config.minBet);
+    await ctx.reply(formatBailout(config.minBet));
   });
 }
 
