@@ -32,6 +32,12 @@ async function main() {
     console.warn('warning: ADMIN_USER_ID is not set. admin commands will not work.');
   }
 
+  await bot.api.setMyCommands([
+    { command: 'portfolio', description: 'your stats' },
+    { command: 'leaderboard', description: 'top 10' },
+    { command: 'help', description: 'rules' },
+  ]);
+
   bot.start({
     onStart: () => console.log('carbon roulette is live. use /drop to start the game.'),
   });
