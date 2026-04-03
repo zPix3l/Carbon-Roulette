@@ -25,6 +25,39 @@ export function registerCallbacks(bot: Bot, database: Database.Database): void {
     await handleChoiceCallback(ctx, database, 'PASS');
   });
 
+  // Switch group (admin only) — from /groups inline buttons
+  bot.callbackQuery(/^switchgroup:(.+)$/, async (ctx) => {
+    const userId = ctx.from.id;
+    if (!config.adminUserId || userId !== config.adminUserId) {
+      await ctx.answerCallbackQuery({ text: 'admin only.' });
+      return;
+    }
+
+    const target = ctx.match![1];
+    let newGroupId: number;
+
+    if (target === 'auto') {
+      // "Add current group" — must be used in a group chat
+      if (!ctx.chat || ctx.chat.type === 'private') {
+        await ctx.answerCallbackQuery({ text: 'use this button in a group chat.' });
+        return;
+      }
+      newGroupId = ctx.chat.id;
+    } else {
+      newGroupId = Number(target);
+    }
+
+    config.groupChatId = newGroupId;
+    db.setBotConfig(database, 'group_chat_id', String(newGroupId));
+    const day = db.getCurrentDay(database, newGroupId);
+    const players = db.getPlayerCount(database, newGroupId);
+
+    await ctx.answerCallbackQuery({ text: `switched to ${newGroupId}` });
+    await ctx.editMessageText(
+      `✅ active group: ${newGroupId}\nday ${day}/30 · ${players} players`,
+    );
+  });
+
   // Amount selection (DM only)
   bot.callbackQuery(/^amount:(\d+):(BUY|PASS):(.+)$/, async (ctx) => {
     if (ctx.chat?.type !== 'private') {

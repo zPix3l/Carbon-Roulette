@@ -185,24 +185,34 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     await ctx.reply(`✅ @${player.username ?? player.telegram_id} reset to ${config.startingPoints} pts in this group. stats and bets cleared.`);
   });
 
-  // /groups — admin only: list all known groups with their state
+  // /groups — admin only: list all known groups with inline buttons
   bot.command('groups', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
     const groups = db.getKnownGroups(database);
+
+    const lines = ['📋 known groups:'];
+    const keyboard = new InlineKeyboard();
+
     if (groups.length === 0) {
-      await ctx.reply('no groups found.');
-      return;
+      lines.push('', 'no groups yet. use the button below in a group to add one.');
+    } else {
+      for (const g of groups) {
+        const active = g.group_id === config.groupChatId ? ' ✅' : '';
+        const roundStatus = db.getGroupState(database, g.group_id, 'round_status') || 'idle';
+        const statusEmoji = roundStatus === 'open' ? '🟢' : roundStatus === 'closed' ? '🔒' : '⏸';
+        lines.push(`${statusEmoji} ${g.group_id}${active}`);
+        lines.push(`   day ${g.current_day}/30 · ${g.players} players`);
+
+        const label = g.group_id === config.groupChatId
+          ? `✅ ${g.group_id} (active)`
+          : `→ Switch to ${g.group_id}`;
+        keyboard.text(label, `switchgroup:${g.group_id}`).row();
+      }
     }
-    const lines = ['📋 known groups:', ''];
-    for (const g of groups) {
-      const active = g.group_id === config.groupChatId ? ' ← active' : '';
-      const roundStatus = db.getGroupState(database, g.group_id, 'round_status') || 'idle';
-      const statusEmoji = roundStatus === 'open' ? '🟢' : roundStatus === 'closed' ? '🔒' : '⏸';
-      lines.push(`${statusEmoji} ${g.group_id}${active}`);
-      lines.push(`   day ${g.current_day}/30 · ${g.players} players`);
-    }
-    await ctx.reply(lines.join('\n'));
+
+    keyboard.text('➕ Add current group', 'switchgroup:auto').row();
+    await ctx.reply(lines.join('\n'), { reply_markup: keyboard });
   });
 
   // /setgroup — admin only: set target group from current chat or by ID
