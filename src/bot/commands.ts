@@ -179,7 +179,7 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       await ctx.reply('usage: /announcement Friday 11:00 UTC');
       return;
     }
-    const bannerBuf = await generateBannerPNG(config.resolveDelayMinutes);
+    const bannerBuf = await generateBannerPNG(config.resolveDelayMinutes, `NEXT DROP · <tspan fill="#fff" fill-opacity=".85">${arg.toUpperCase()}</tspan>`);
     const keyboard = new InlineKeyboard().url('📚 LEARN', LEARN_URL);
     await bot.api.sendPhoto(config.groupChatId, new InputFile(bannerBuf, 'banner.png'), {
       caption: formatAnnouncement(arg),

@@ -23,9 +23,9 @@ function formatTime(min: number): string {
   return h === 1 ? '1 HOUR' : `${h} HOURS`;
 }
 
-export async function generateBannerPNG(resolveMinutes: number): Promise<Buffer> {
+export async function generateBannerPNG(resolveMinutes: number, bottomOverride?: string): Promise<Buffer> {
   const W = 1400, H = 788, cx = W / 2;
-  const t = formatTime(resolveMinutes);
+  const t = bottomOverride ?? `YOU HAVE <tspan fill="#fff" fill-opacity=".85">${formatTime(resolveMinutes)}</tspan>`;
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
 <defs>
@@ -89,7 +89,7 @@ export async function generateBannerPNG(resolveMinutes: number): Promise<Buffer>
 <line x1="${cx + 100}" x2="${cx + 200}" y1="590" y2="590" stroke="#a56f73" stroke-opacity=".4" stroke-width="2.5"/>
 <rect x="${cx - 190}" y="${H - 80}" width="380" height="52" rx="26" fill="#fff" fill-opacity=".03" stroke="#fff" stroke-opacity=".06"/>
 <circle cx="${cx - 148}" cy="${H - 54}" r="5.5" fill="#53d077"/>
-<text x="${cx + 8}" y="${H - 46}" text-anchor="middle" font-family="SM,monospace" font-size="16" font-weight="700" fill="#c8c8c8" fill-opacity=".5" letter-spacing="3">YOU HAVE <tspan fill="#fff" fill-opacity=".85">${t}</tspan></text>
+<text x="${cx + 8}" y="${H - 46}" text-anchor="middle" font-family="SM,monospace" font-size="16" font-weight="700" fill="#c8c8c8" fill-opacity=".5" letter-spacing="3">${t}</text>
 </svg>`;
 
   return sharp(Buffer.from(svg)).png().toBuffer();
