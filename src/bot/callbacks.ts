@@ -36,21 +36,22 @@ export function registerCallbacks(bot: Bot, database: Database.Database): void {
     const projectDay = parseInt(match[1], 10);
     const choice = match[2] as 'BUY' | 'PASS';
     const amountStr = match[3];
+    const g = config.groupChatId;
 
     const userId = ctx.from.id;
     const username = ctx.from.username ?? null;
     const displayName = ctx.from.first_name ?? null;
-    const player = db.getOrCreatePlayer(database, userId, username, displayName, config.startingPoints);
+    const player = db.getOrCreatePlayer(database, userId, username, displayName, config.startingPoints, g);
 
     // Check current day is still active
-    const currentDay = db.getCurrentDay(database);
+    const currentDay = db.getCurrentDay(database, g);
     if (projectDay !== currentDay) {
       await ctx.answerCallbackQuery({ text: 'this round is closed.' });
       return;
     }
 
     // Check not already bet
-    const existingBet = db.getBet(database, userId, projectDay);
+    const existingBet = db.getBet(database, userId, projectDay, g);
     if (existingBet) {
       await ctx.answerCallbackQuery({ text: 'you already placed your bet on this case.' });
       return;
@@ -75,7 +76,7 @@ export function registerCallbacks(bot: Bot, database: Database.Database): void {
     }
 
     // Place bet
-    const success = db.placeBet(database, userId, projectDay, choice, amount);
+    const success = db.placeBet(database, userId, projectDay, g, choice, amount);
     if (!success) {
       await ctx.answerCallbackQuery({ text: 'you already placed your bet on this case.' });
       return;
@@ -95,17 +96,18 @@ async function handleChoiceCallback(ctx: any, database: Database.Database, choic
   const userId = ctx.from.id;
   const username = ctx.from.username ?? null;
   const displayName = ctx.from.first_name ?? null;
+  const g = config.groupChatId;
 
-  const player = db.getOrCreatePlayer(database, userId, username, displayName, config.startingPoints);
+  const player = db.getOrCreatePlayer(database, userId, username, displayName, config.startingPoints, g);
 
-  const currentDay = db.getCurrentDay(database);
-  const roundStatus = db.getState(database, 'round_status');
+  const currentDay = db.getCurrentDay(database, g);
+  const roundStatus = db.getGroupState(database, g, 'round_status');
   if (projectDay !== currentDay || roundStatus === 'closed') {
     await ctx.answerCallbackQuery({ text: 'this round is closed. wait for the next drop.' });
     return;
   }
 
-  const existingBet = db.getBet(database, userId, projectDay);
+  const existingBet = db.getBet(database, userId, projectDay, g);
   if (existingBet) {
     await ctx.answerCallbackQuery({ text: 'you already placed your bet on this case.' });
     return;

@@ -57,12 +57,13 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
   bot.command('status', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
-    const currentDay = db.getCurrentDay(database);
-    const roundStatus = db.getState(database, 'round_status') || 'idle';
-    const betCount = currentDay > 0 ? db.getBetCountForDay(database, currentDay) : 0;
-    const totalPlayers = db.getPlayerCount(database);
-    const lastRes = db.getState(database, 'last_resolution_date');
-    const lastDrop = db.getState(database, 'last_drop_date');
+    const g = config.groupChatId;
+    const currentDay = db.getCurrentDay(database, g);
+    const roundStatus = db.getGroupState(database, g, 'round_status') || 'idle';
+    const betCount = currentDay > 0 ? db.getBetCountForDay(database, currentDay, g) : 0;
+    const totalPlayers = db.getPlayerCount(database, g);
+    const lastRes = db.getGroupState(database, g, 'last_resolution_date');
+    const lastDrop = db.getGroupState(database, g, 'last_drop_date');
     const project = currentDay > 0 ? getProjectByDay(currentDay) : null;
     const statusEmoji = roundStatus === 'open' ? '🟢 OPEN' : roundStatus === 'closed' ? '🔒 CLOSED' : '⏸ IDLE';
     await ctx.reply([
@@ -75,6 +76,7 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       `players: ${totalPlayers}`,
       `last resolution: ${lastRes || 'never'}`,
       `last drop: ${lastDrop || 'never'}`,
+      `group: ${g}`,
     ].join('\n'));
   });
 
@@ -98,9 +100,10 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       await ctx.reply('usage: /setday N (0-30). 0 = before game starts.');
       return;
     }
+    const g = config.groupChatId;
     cancelAutoResolve();
-    db.setState(database, 'current_day', String(day));
-    db.setState(database, 'round_status', 'closed');
+    db.setGroupState(database, g, 'current_day', String(day));
+    db.setGroupState(database, g, 'round_status', 'closed');
     await ctx.reply(`⚠️ game state forced to day ${day}. use /drop to open the next round.`);
   });
 
@@ -110,41 +113,43 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     if (!user || !isAdmin(user.userId)) return;
     const arg = ctx.match?.trim();
     if (arg !== 'CONFIRM') {
-      await ctx.reply('⚠️ this will reset the game to day 0 and delete all bets.\nplayer accounts and balances are PRESERVED.\n\ntype /resetgame CONFIRM to proceed.');
+      await ctx.reply('⚠️ this will reset the game to day 0 and delete all bets for this group.\nplayer accounts and balances are PRESERVED.\n\ntype /resetgame CONFIRM to proceed.');
       return;
     }
+    const g = config.groupChatId;
     cancelAutoResolve();
-    db.setState(database, 'current_day', '0');
-    db.setState(database, 'round_status', 'closed');
-    db.setState(database, 'last_resolution_date', '');
-    db.setState(database, 'last_drop_date', '');
-    db.setState(database, 'drop_message_id', '');
-    // Delete all bets but keep players
-    database.prepare('DELETE FROM bets').run();
+    db.setGroupState(database, g, 'current_day', '0');
+    db.setGroupState(database, g, 'round_status', 'closed');
+    db.setGroupState(database, g, 'last_resolution_date', '');
+    db.setGroupState(database, g, 'last_drop_date', '');
+    db.setGroupState(database, g, 'drop_message_id', '');
+    // Delete bets for this group only
+    database.prepare('DELETE FROM bets WHERE group_id = ?').run(g);
     await ctx.reply('✅ game reset to day 0. all bets cleared. player accounts intact.\nuse /drop to start a new game.');
   });
 
-  // /resetleaderboard — admin only: DELETE all players, clear bets, full clean slate
+  // /resetleaderboard — admin only: DELETE all players for this group, clear bets, full clean slate
   bot.command('resetleaderboard', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
     const arg = ctx.match?.trim();
     if (arg !== 'CONFIRM') {
-      await ctx.reply('⚠️ this will DELETE all players from the leaderboard, clear all bets, and reset the game to day 0.\neveryone will need to /play again.\n\ntype /resetleaderboard CONFIRM to proceed.');
+      await ctx.reply('⚠️ this will DELETE all players from the leaderboard for this group, clear all bets, and reset the game to day 0.\neveryone will need to /play again.\n\ntype /resetleaderboard CONFIRM to proceed.');
       return;
     }
+    const g = config.groupChatId;
     cancelAutoResolve();
-    database.prepare('DELETE FROM bets').run();
-    database.prepare('DELETE FROM players').run();
-    db.setState(database, 'current_day', '0');
-    db.setState(database, 'round_status', 'closed');
-    db.setState(database, 'last_resolution_date', '');
-    db.setState(database, 'last_drop_date', '');
-    db.setState(database, 'drop_message_id', '');
-    await ctx.reply('✅ full reset. all players deleted, leaderboard empty, game back to day 0. everyone starts fresh with /play.');
+    database.prepare('DELETE FROM bets WHERE group_id = ?').run(g);
+    database.prepare('DELETE FROM group_players WHERE group_id = ?').run(g);
+    db.setGroupState(database, g, 'current_day', '0');
+    db.setGroupState(database, g, 'round_status', 'closed');
+    db.setGroupState(database, g, 'last_resolution_date', '');
+    db.setGroupState(database, g, 'last_drop_date', '');
+    db.setGroupState(database, g, 'drop_message_id', '');
+    await ctx.reply('✅ full reset for this group. leaderboard empty, game back to day 0. everyone starts fresh with /play.');
   });
 
-  // /resetplayer @username — admin only: reset a single player to starting balance
+  // /resetplayer @username — admin only: reset a single player in the current group
   bot.command('resetplayer', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
@@ -153,6 +158,7 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       await ctx.reply('usage: /resetplayer @username or /resetplayer telegram_id');
       return;
     }
+    const g = config.groupChatId;
     const target = arg.replace('@', '');
     // Try by username first, then by telegram ID
     let player = database.prepare(`SELECT * FROM players WHERE username = ?`).get(target) as any;
@@ -164,9 +170,12 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       await ctx.reply(`player "${arg}" not found.`);
       return;
     }
-    database.prepare(`UPDATE players SET balance = ?, games_played = 0, wins = 0, current_streak = 0, best_streak = 0, last_bailout = NULL WHERE telegram_id = ?`).run(config.startingPoints, player.telegram_id);
-    database.prepare(`DELETE FROM bets WHERE telegram_id = ?`).run(player.telegram_id);
-    await ctx.reply(`✅ @${player.username ?? player.telegram_id} reset to ${config.startingPoints} pts. stats and bets cleared.`);
+    // Reset group-specific stats
+    database.prepare(`UPDATE group_players SET balance = ?, games_played = 0, wins = 0, current_streak = 0, best_streak = 0, last_bailout = NULL WHERE telegram_id = ? AND group_id = ?`)
+      .run(config.startingPoints, player.telegram_id, g);
+    // Delete bets for this player in this group
+    database.prepare(`DELETE FROM bets WHERE telegram_id = ? AND group_id = ?`).run(player.telegram_id, g);
+    await ctx.reply(`✅ @${player.username ?? player.telegram_id} reset to ${config.startingPoints} pts in this group. stats and bets cleared.`);
   });
 
   // /setgroup — admin only: set target group from current chat or by ID
@@ -188,8 +197,10 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       return;
     }
     config.groupChatId = newGroupId;
-    db.setState(database, 'group_chat_id', String(newGroupId));
-    await ctx.reply(`✅ group set to ${newGroupId}`);
+    db.setBotConfig(database, 'group_chat_id', String(newGroupId));
+    const day = db.getCurrentDay(database, newGroupId);
+    const players = db.getPlayerCount(database, newGroupId);
+    await ctx.reply(`✅ group set to ${newGroupId}\nstate: day ${day}/30, ${players} players`);
   });
 
   // /announcement <datetime> — admin only: post game teaser with banner to the group
@@ -217,7 +228,8 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
   bot.command('start', async (ctx) => {
     const user = extractUser(ctx);
     if (!user) return;
-    db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints);
+    const g = config.groupChatId;
+    db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints, g);
 
     const payload = ctx.match;
     if (payload && payload.startsWith('play_')) {
@@ -252,8 +264,9 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       return;
     }
 
-    db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints);
-    const currentDay = db.getCurrentDay(database);
+    const g = config.groupChatId;
+    db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints, g);
+    const currentDay = db.getCurrentDay(database, g);
     await showProjectInDM(ctx, database, user, currentDay);
   });
 
@@ -268,9 +281,10 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       return;
     }
 
-    const player = db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints);
-    const rank = db.getPlayerRank(database, user.userId);
-    const totalPlayers = db.getPlayerCount(database);
+    const g = config.groupChatId;
+    const player = db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints, g);
+    const rank = db.getPlayerRank(database, user.userId, g);
+    const totalPlayers = db.getPlayerCount(database, g);
     await ctx.reply(formatPortfolio(player, rank, totalPlayers));
   });
 
@@ -278,10 +292,11 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
   bot.command('leaderboard', async (ctx) => {
     const user = extractUser(ctx);
     if (!user) return;
-    db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints);
-    const top = db.getLeaderboard(database, 10);
-    const rank = db.getPlayerRank(database, user.userId);
-    const totalPlayers = db.getPlayerCount(database);
+    const g = config.groupChatId;
+    db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints, g);
+    const top = db.getLeaderboard(database, g, 10);
+    const rank = db.getPlayerRank(database, user.userId, g);
+    const totalPlayers = db.getPlayerCount(database, g);
     await ctx.reply(formatLeaderboard(top, rank, totalPlayers));
   });
 
@@ -296,14 +311,15 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       return;
     }
 
-    const player = db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints);
+    const g = config.groupChatId;
+    const player = db.getOrCreatePlayer(database, user.userId, user.username, user.displayName, config.startingPoints, g);
     const { allowed, reason } = canBailout(player.balance);
     if (!allowed) {
       await ctx.reply(reason!);
       return;
     }
 
-    db.performBailout(database, user.userId, config.minBet);
+    db.performBailout(database, user.userId, g, config.minBet);
     await ctx.reply(formatBailout(config.minBet));
   });
 }
@@ -316,6 +332,8 @@ async function showProjectInDM(
   user: { userId: number; username: string | null; displayName: string | null },
   day: number,
 ): Promise<void> {
+  const g = config.groupChatId;
+
   if (day <= 0) {
     await ctx.reply('no active case yet. a new one will drop in the group soon.');
     return;
@@ -325,20 +343,20 @@ async function showProjectInDM(
     return;
   }
 
-  const currentDay = db.getCurrentDay(database);
+  const currentDay = db.getCurrentDay(database, g);
   if (day !== currentDay) {
     await ctx.reply(`that case is closed. use /play to see the current one.`);
     return;
   }
 
   // Check if round is closed (already resolved)
-  const roundStatus = db.getState(database, 'round_status');
+  const roundStatus = db.getGroupState(database, g, 'round_status');
   if (roundStatus === 'closed') {
     await ctx.reply('this case is closed. verdict is in the group. next one drops soon.');
     return;
   }
 
-  const existingBet = db.getBet(database, user.userId, day);
+  const existingBet = db.getBet(database, user.userId, day, g);
   if (existingBet) {
     await ctx.reply(`you already called this one. ${existingBet.choice} for ${existingBet.amount} pts. verdict comes when the round closes.`);
     return;

@@ -36,10 +36,11 @@ export function getProjectByDay(day: number): Project | undefined {
 
 /**
  * Resolve current day: calculate payouts, post verdict in group.
- * Returns true if resolution happened, false if nothing to resolve.
+ * Always operates on the active group (config.groupChatId).
  */
 export async function doResolve(bot: Bot, database: Database.Database): Promise<{ ok: boolean; message: string }> {
-  const currentDay = db.getCurrentDay(database);
+  const groupId = config.groupChatId;
+  const currentDay = db.getCurrentDay(database, groupId);
   if (currentDay <= 0) {
     return { ok: false, message: 'no active day to resolve.' };
   }
@@ -50,16 +51,16 @@ export async function doResolve(bot: Bot, database: Database.Database): Promise<
   }
 
   // Check if already resolved (has resolved bets for this day)
-  const existingBets = db.getBetsForDay(database, currentDay);
+  const existingBets = db.getBetsForDay(database, currentDay, groupId);
   const alreadyResolved = existingBets.some(b => b.result !== null);
   if (alreadyResolved) {
     return { ok: false, message: `day ${currentDay} already resolved.` };
   }
 
   // Get the original drop message_id for reply
-  const dropMsgId = db.getState(database, 'drop_message_id');
+  const dropMsgId = db.getGroupState(database, groupId, 'drop_message_id');
 
-  const bets = db.getBetsForDay(database, currentDay);
+  const bets = db.getBetsForDay(database, currentDay, groupId);
 
   // Resolve all bets in a transaction
   const results: { bet: db.Bet; player: db.Player; payout: number }[] = [];
@@ -67,7 +68,7 @@ export async function doResolve(bot: Bot, database: Database.Database): Promise<
   if (bets.length > 0) {
     const transaction = database.transaction(() => {
       for (const bet of bets) {
-        const player = db.getPlayer(database, bet.telegram_id);
+        const player = db.getPlayer(database, bet.telegram_id, groupId);
         if (!player) continue;
 
         const { result, payout } = calculatePayout(
@@ -78,10 +79,10 @@ export async function doResolve(bot: Bot, database: Database.Database): Promise<
         );
 
         db.resolveBet(database, bet.id, result, payout);
-        db.updateBalance(database, bet.telegram_id, payout);
-        db.updateStreak(database, bet.telegram_id, result === 'win');
+        db.updateBalance(database, bet.telegram_id, groupId, payout);
+        db.updateStreak(database, bet.telegram_id, groupId, result === 'win');
 
-        const updatedPlayer = db.getPlayer(database, bet.telegram_id)!;
+        const updatedPlayer = db.getPlayer(database, bet.telegram_id, groupId)!;
         results.push({ bet, player: updatedPlayer, payout });
       }
     });
@@ -95,7 +96,7 @@ export async function doResolve(bot: Bot, database: Database.Database): Promise<
     if (dropMsgId) {
       opts.reply_parameters = { message_id: parseInt(dropMsgId, 10) };
     }
-    await bot.api.sendMessage(config.groupChatId, verdictMsg, opts);
+    await bot.api.sendMessage(groupId, verdictMsg, opts);
   } catch (err) {
     console.error('failed to send verdict to group:', err);
     return { ok: false, message: `verdict computed but failed to post in group: ${err}` };
@@ -118,16 +119,16 @@ export async function doResolve(bot: Bot, database: Database.Database): Promise<
 
   // Mark resolved
   const today = new Date().toISOString().split('T')[0];
-  db.setState(database, 'last_resolution_date', today);
-  db.setState(database, 'round_status', 'closed');
+  db.setGroupState(database, groupId, 'last_resolution_date', today);
+  db.setGroupState(database, groupId, 'round_status', 'closed');
 
   // Update group drop message: show CLOSED, remove buttons
   if (dropMsgId) {
     try {
-      const betCount = db.getBetCountForDay(database, currentDay);
+      const betCount = db.getBetCountForDay(database, currentDay, groupId);
       const closedText = formatDropGroupClosed(project, betCount);
       await bot.api.editMessageCaption(
-        config.groupChatId,
+        groupId,
         parseInt(dropMsgId, 10),
         { caption: closedText },
       );
@@ -141,24 +142,25 @@ export async function doResolve(bot: Bot, database: Database.Database): Promise<
 
 /**
  * Publish a new drop: increment day, post teaser in group with PLAY + LEARN buttons.
- * Returns true if drop was published.
+ * Always operates on the active group (config.groupChatId).
  */
 export async function doDrop(bot: Bot, database: Database.Database): Promise<{ ok: boolean; message: string }> {
-  const currentDay = db.getCurrentDay(database);
+  const groupId = config.groupChatId;
+  const currentDay = db.getCurrentDay(database, groupId);
   const nextDay = currentDay + 1;
 
   if (nextDay > 30) {
     // Game over
     try {
-      const top = db.getLeaderboard(database, 10);
-      const totalPlayers = db.getPlayerCount(database);
+      const top = db.getLeaderboard(database, groupId, 10);
+      const totalPlayers = db.getPlayerCount(database, groupId);
       const lines = ['🏆 carbon roulette — game over!', '', 'final standings:', ''];
       top.forEach((p, i) => {
         const displayName = p.username ? `@${p.username}` : (p.display_name ?? 'anon');
         lines.push(`${i + 1}. ${displayName} — ${p.balance.toLocaleString()} pts`);
       });
       lines.push('', `${totalPlayers} players participated. thanks for playing.`);
-      await bot.api.sendMessage(config.groupChatId, lines.join('\n'));
+      await bot.api.sendMessage(groupId, lines.join('\n'));
     } catch (err) {
       console.error('failed to send game over:', err);
     }
@@ -171,10 +173,10 @@ export async function doDrop(bot: Bot, database: Database.Database): Promise<{ o
   }
 
   // Advance game state
-  db.setState(database, 'current_day', String(nextDay));
-  db.setState(database, 'round_status', 'open');
+  db.setGroupState(database, groupId, 'current_day', String(nextDay));
+  db.setGroupState(database, groupId, 'round_status', 'open');
   const today = new Date().toISOString().split('T')[0];
-  db.setState(database, 'last_drop_date', today);
+  db.setGroupState(database, groupId, 'last_drop_date', today);
 
   // Get bot username for the DM link
   const botInfo = await bot.api.getMe();
@@ -188,12 +190,12 @@ export async function doDrop(bot: Bot, database: Database.Database): Promise<{ o
 
   try {
     const bannerBuf = await generateBannerPNG(config.resolveDelayMinutes);
-    const sent = await bot.api.sendPhoto(config.groupChatId, new InputFile(bannerBuf, 'banner.png'), {
+    const sent = await bot.api.sendPhoto(groupId, new InputFile(bannerBuf, 'banner.png'), {
       caption: dropMsg,
       reply_markup: keyboard,
     });
     // Store message_id for verdict reply + live counter updates
-    db.setState(database, 'drop_message_id', String(sent.message_id));
+    db.setGroupState(database, groupId, 'drop_message_id', String(sent.message_id));
     console.log(`[drop] day ${nextDay} posted to group (msg_id: ${sent.message_id})`);
   } catch (err) {
     console.error('failed to send drop to group:', err);
@@ -249,8 +251,9 @@ export function cancelAutoResolve(): void {
  * Called each time a player places a bet.
  */
 export async function updateDropBetCount(bot: Bot, database: Database.Database): Promise<void> {
-  const currentDay = db.getCurrentDay(database);
-  const dropMsgId = db.getState(database, 'drop_message_id');
+  const groupId = config.groupChatId;
+  const currentDay = db.getCurrentDay(database, groupId);
+  const dropMsgId = db.getGroupState(database, groupId, 'drop_message_id');
   if (!dropMsgId || currentDay <= 0) {
     console.log('[bet counter] no drop_message_id stored, skipping update');
     return;
@@ -259,7 +262,7 @@ export async function updateDropBetCount(bot: Bot, database: Database.Database):
   const project = getProjectByDay(currentDay);
   if (!project) return;
 
-  const betCount = db.getBetCountForDay(database, currentDay);
+  const betCount = db.getBetCountForDay(database, currentDay, groupId);
   const botInfo = await bot.api.getMe();
 
   const updatedText = formatDropGroup(project, betCount);
@@ -269,7 +272,7 @@ export async function updateDropBetCount(bot: Bot, database: Database.Database):
 
   try {
     await bot.api.editMessageCaption(
-      config.groupChatId,
+      groupId,
       parseInt(dropMsgId, 10),
       { caption: updatedText, reply_markup: keyboard },
     );
@@ -277,4 +280,3 @@ export async function updateDropBetCount(bot: Bot, database: Database.Database):
     console.log('[bet counter] failed to update group message:', err);
   }
 }
-
