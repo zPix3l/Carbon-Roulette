@@ -306,6 +306,27 @@ export function formatStart(balance: number): string {
   ].join('\n');
 }
 
+// ---- Announcement (one-time teaser for the group) ----
+
+export function formatAnnouncement(botUsername: string): string {
+  return [
+    `🌱 Carbon Roulette is live.`,
+    ``,
+    `A carbon credit project drops. You have 1 hour to investigate the case file and decide: legit or scam?`,
+    ``,
+    `→ Tap INVESTIGATE to open the case in DM`,
+    `→ Study the numbers, spot the red flags`,
+    `→ BUY if you trust it, PASS if you don't`,
+    `→ Get it right, stack points. Get it wrong, lose them.`,
+    ``,
+    `📅 Drops every Monday & Thursday`,
+    `⏱ 1 hour to decide per round`,
+    `🏆 30 rounds — top players win`,
+    ``,
+    `To join, DM @${botUsername} → /start`,
+  ].join('\n');
+}
+
 // ---- Redirect to DM message (for group) ----
 
 export function formatGoToDM(botUsername: string): string {

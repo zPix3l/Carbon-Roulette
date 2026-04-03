@@ -1,12 +1,13 @@
-import { Bot, InlineKeyboard } from 'grammy';
+import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import type Database from 'better-sqlite3';
 import { config } from '../config.js';
 import * as db from '../db/queries.js';
 import { canBailout } from '../game/scoring.js';
 import { getProjectByDay, doResolve, doDrop, cancelAutoResolve } from '../game/engine.js';
+import { generateBannerPNG } from '../game/banner.js';
 import {
   formatStart, formatHelp, formatPortfolio, formatLeaderboard,
-  formatBailout, formatDrop, formatGoToDM,
+  formatBailout, formatDrop, formatGoToDM, formatAnnouncement,
 } from '../game/messages.js';
 
 function extractUser(ctx: { from?: { id: number; username?: string; first_name?: string } }) {
@@ -166,6 +167,18 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     database.prepare(`UPDATE players SET balance = ?, games_played = 0, wins = 0, current_streak = 0, best_streak = 0, last_bailout = NULL WHERE telegram_id = ?`).run(config.startingPoints, player.telegram_id);
     database.prepare(`DELETE FROM bets WHERE telegram_id = ?`).run(player.telegram_id);
     await ctx.reply(`✅ @${player.username ?? player.telegram_id} reset to ${config.startingPoints} pts. stats and bets cleared.`);
+  });
+
+  // /announcement — admin only: post game teaser with banner to the group (one-time)
+  bot.command('announcement', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const botInfo = await bot.api.getMe();
+    const bannerBuf = await generateBannerPNG(config.resolveDelayMinutes);
+    await bot.api.sendPhoto(config.groupChatId, new InputFile(bannerBuf, 'banner.png'), {
+      caption: formatAnnouncement(botInfo.username),
+    });
+    await ctx.reply('✅ announcement posted to the group.');
   });
 
   // ---- PLAYER COMMANDS ----
