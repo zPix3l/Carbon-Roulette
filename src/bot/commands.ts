@@ -1,6 +1,6 @@
 import { Bot, InlineKeyboard, InputFile } from 'grammy';
 import type Database from 'better-sqlite3';
-import { config } from '../config.js';
+import { config, BUILD_SHA, BUILD_DATE } from '../config.js';
 import * as db from '../db/queries.js';
 import { canBailout } from '../game/scoring.js';
 import { getProjectByDay, doResolve, doDrop, cancelAutoResolve } from '../game/engine.js';
@@ -88,6 +88,13 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       `last drop: ${lastDrop || 'never'}`,
       `group: ${g}`,
     ].join('\n'));
+  });
+
+  // /version — admin only: show build version
+  bot.command('version', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    await ctx.reply(`🏷 build: ${BUILD_SHA.slice(0, 7)}\n📅 date: ${BUILD_DATE}`);
   });
 
   // /nextday — admin only: resolve current + drop next

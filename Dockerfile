@@ -13,6 +13,11 @@ COPY src/ ./src/
 
 RUN npm run build
 
+ARG BUILD_SHA=unknown
+ARG BUILD_DATE=unknown
+ENV BUILD_SHA=$BUILD_SHA
+ENV BUILD_DATE=$BUILD_DATE
+
 # Data volume will be mounted at /data by Railway
 ENV DB_PATH=/data/carbon-roulette.db
 

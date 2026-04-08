@@ -14,6 +14,9 @@ function envInt(key: string, fallback: number): number {
   return raw ? parseInt(raw, 10) : fallback;
 }
 
+export const BUILD_SHA = process.env.BUILD_SHA || 'dev';
+export const BUILD_DATE = process.env.BUILD_DATE || new Date().toISOString().split('T')[0];
+
 export const config = {
   botToken: env('BOT_TOKEN'),
   groupChatId: Number(env('GROUP_CHAT_ID', '0')),
