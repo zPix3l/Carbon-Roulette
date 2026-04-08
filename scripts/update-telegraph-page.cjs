@@ -1,7 +1,12 @@
 const https = require("https");
+require("dotenv").config();
 
-const TOKEN = "REDACTED_TOKEN";
-const PAGE_PATH = "Carbon-Roulette--How-to-Play-04-02";
+const TOKEN = process.env.TELEGRAPH_TOKEN;
+if (!TOKEN) {
+  console.error("❌ missing TELEGRAPH_TOKEN in .env");
+  process.exit(1);
+}
+const PAGE_PATH = process.env.TELEGRAPH_PAGE_PATH || "Carbon-Roulette--How-to-Play-04-08";
 
 const IMAGES = {
   drop: "https://files.catbox.moe/s7ymvt.jpg",

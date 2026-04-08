@@ -3,7 +3,7 @@ import type { Player, Bet } from '../db/queries.js';
 import { getStreakMultiplier } from './scoring.js';
 
 // URL for the "LEARN" button — player-facing guide with storytelling, rules, and reference tables
-export const LEARN_URL = 'https://telegra.ph/Carbon-Roulette--How-to-Play-04-02';
+export const LEARN_URL = 'https://telegra.ph/Carbon-Roulette--How-to-Play-04-08';
 
 // ---- Method emoji lookup ----
 
