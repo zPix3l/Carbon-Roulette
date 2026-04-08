@@ -1,6 +1,6 @@
 {
   "name": "carbon-roulette",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Daily carbon credit due diligence game — Telegram bot",
   "type": "module",
   "scripts": {

@@ -14,7 +14,14 @@ function envInt(key: string, fallback: number): number {
   return raw ? parseInt(raw, 10) : fallback;
 }
 
-export const BUILD_SHA = process.env.BUILD_SHA || 'dev';
+import { execSync } from 'child_process';
+
+function getGitSha(): string {
+  try { return execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim(); }
+  catch { return process.env.BUILD_SHA || 'unknown'; }
+}
+
+export const BUILD_SHA = getGitSha();
 export const BUILD_DATE = process.env.BUILD_DATE || new Date().toISOString().split('T')[0];
 
 export const config = {
