@@ -310,19 +310,21 @@ export function formatStart(balance: number): string {
 
 export function formatAnnouncement(nextDrop: string): string {
   return [
-    `A carbon credit project drops in this chat. You have 1 hour to investigate the case file and decide: legit or scam?`,
+    `🎮 Carbon Roulette.`,
     ``,
-    `→ Study the numbers, spot the red flags`,
-    `→ BUY if you trust it, PASS if you don't`,
-    `→ Get it right, stack points. Get it wrong, lose them.`,
+    `A carbon credit project drops in this chat.`,
+    `Your job: figure out if it's legit or a scam.`,
     ``,
-    `📅 Drops every Monday & Thursday`,
-    `⏱ 1 hour to decide per round`,
-    `🏆 30 rounds — top players win`,
+    `Get it right → earn points.`,
+    `Get it wrong → lose points.`,
     ``,
-    `First drop: ${nextDrop}`,
+    `30 rounds. 30 projects. One leaderboard.`,
     ``,
-    `👇 Check how it works before the first round`,
+    `🕐 Next drop: ${nextDrop}`,
+    ``,
+    `When it drops, hit INVESTIGATE and make your call.`,
+    ``,
+    `Good luck !`,
   ].join('\n');
 }
 

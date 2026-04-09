@@ -39,7 +39,8 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
 
   // ---- ADMIN COMMANDS ----
 
-  // /drop — admin only: publish next project to the group
+  // /drop [minutes] — admin only: publish next project to the group
+  // Optional: /drop 30 → sets resolve time to 30 min for this round
   // If sent in a group, auto-switches to that group first.
   bot.command('drop', async (ctx) => {
     const user = extractUser(ctx);
@@ -49,6 +50,14 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       config.groupChatId = ctx.chat.id;
       db.setBotConfig(database, 'group_chat_id', String(ctx.chat.id));
       await ctx.reply(`⚡ group switched to ${ctx.chat.id}`);
+    }
+    // Optional resolve time override
+    const arg = ctx.match?.trim();
+    if (arg) {
+      const mins = parseInt(arg, 10);
+      if (!isNaN(mins) && mins > 0) {
+        config.resolveDelayMinutes = mins;
+      }
     }
     const result = await doDrop(bot, database);
     await ctx.reply(result.message);
