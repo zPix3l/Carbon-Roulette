@@ -64,6 +64,39 @@ export function initDb(): Database.Database {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    -- Recurring schedules: days × time × per group
+    CREATE TABLE IF NOT EXISTS schedules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
+      days_of_week TEXT NOT NULL,           -- CSV: 'mon,wed,fri'
+      time_utc TEXT NOT NULL,               -- 'HH:MM'
+      resolve_delay_minutes INTEGER NOT NULL DEFAULT 60,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_schedules_enabled
+      ON schedules(enabled, group_id);
+
+    -- Concrete jobs: either one-off (manual /drop) or materialized from a schedule
+    CREATE TABLE IF NOT EXISTS scheduled_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
+      kind TEXT NOT NULL CHECK(kind IN ('drop','resolve')),
+      run_at TEXT NOT NULL,                 -- ISO 8601 UTC
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending','done','failed','skipped')),
+      schedule_id INTEGER,                  -- NULL if one-off
+      payload TEXT,                         -- JSON
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      executed_at TEXT,
+      error TEXT,
+      FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_jobs_pending_run_at
+      ON scheduled_jobs(status, run_at);
+    CREATE INDEX IF NOT EXISTS idx_jobs_schedule_run_at
+      ON scheduled_jobs(schedule_id, run_at);
   `);
 
   return db;

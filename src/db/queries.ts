@@ -210,6 +210,146 @@ export function getKnownGroups(db: Database.Database): { group_id: number; curre
   `).all() as { group_id: number; current_day: number; players: number }[];
 }
 
+// ---- Scheduler: schedules (recurring) ----
+
+export interface Schedule {
+  id: number;
+  group_id: number;
+  days_of_week: string;           // CSV: 'mon,wed,fri'
+  time_utc: string;               // 'HH:MM'
+  resolve_delay_minutes: number;
+  enabled: number;                // 0 | 1
+  created_at: string;
+}
+
+export function insertSchedule(
+  db: Database.Database,
+  groupId: number,
+  daysOfWeek: string,
+  timeUtc: string,
+  resolveDelayMinutes: number,
+): number {
+  const info = db.prepare(`
+    INSERT INTO schedules (group_id, days_of_week, time_utc, resolve_delay_minutes)
+    VALUES (?, ?, ?, ?)
+  `).run(groupId, daysOfWeek, timeUtc, resolveDelayMinutes);
+  return Number(info.lastInsertRowid);
+}
+
+export function getSchedulesForGroup(db: Database.Database, groupId: number): Schedule[] {
+  return db.prepare(`SELECT * FROM schedules WHERE group_id = ? ORDER BY id`)
+    .all(groupId) as Schedule[];
+}
+
+export function getScheduleById(db: Database.Database, id: number): Schedule | undefined {
+  return db.prepare(`SELECT * FROM schedules WHERE id = ?`).get(id) as Schedule | undefined;
+}
+
+export function getActiveSchedules(db: Database.Database): Schedule[] {
+  return db.prepare(`SELECT * FROM schedules WHERE enabled = 1`).all() as Schedule[];
+}
+
+export function deleteSchedule(db: Database.Database, id: number): boolean {
+  const info = db.prepare(`DELETE FROM schedules WHERE id = ?`).run(id);
+  return info.changes > 0;
+}
+
+export function setScheduleEnabled(db: Database.Database, id: number, enabled: boolean): boolean {
+  const info = db.prepare(`UPDATE schedules SET enabled = ? WHERE id = ?`)
+    .run(enabled ? 1 : 0, id);
+  return info.changes > 0;
+}
+
+// ---- Scheduler: concrete jobs ----
+
+export interface ScheduledJob {
+  id: number;
+  group_id: number;
+  kind: 'drop' | 'resolve';
+  run_at: string;                 // ISO 8601 UTC
+  status: 'pending' | 'done' | 'failed' | 'skipped';
+  schedule_id: number | null;
+  payload: string | null;         // JSON
+  created_at: string;
+  executed_at: string | null;
+  error: string | null;
+}
+
+export function insertJob(
+  db: Database.Database,
+  groupId: number,
+  kind: 'drop' | 'resolve',
+  runAt: string,
+  scheduleId: number | null,
+  payload: Record<string, unknown> | null,
+): number {
+  const info = db.prepare(`
+    INSERT INTO scheduled_jobs (group_id, kind, run_at, schedule_id, payload)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(groupId, kind, runAt, scheduleId, payload ? JSON.stringify(payload) : null);
+  return Number(info.lastInsertRowid);
+}
+
+export function getJobById(db: Database.Database, id: number): ScheduledJob | undefined {
+  return db.prepare(`SELECT * FROM scheduled_jobs WHERE id = ?`)
+    .get(id) as ScheduledJob | undefined;
+}
+
+export function getPendingJobs(db: Database.Database): ScheduledJob[] {
+  return db.prepare(`
+    SELECT * FROM scheduled_jobs WHERE status = 'pending' ORDER BY run_at ASC
+  `).all() as ScheduledJob[];
+}
+
+export function getPendingJobsForGroup(db: Database.Database, groupId: number, limit = 10): ScheduledJob[] {
+  return db.prepare(`
+    SELECT * FROM scheduled_jobs
+    WHERE status = 'pending' AND group_id = ?
+    ORDER BY run_at ASC LIMIT ?
+  `).all(groupId, limit) as ScheduledJob[];
+}
+
+export function getPendingDropJobForGroup(db: Database.Database, groupId: number): ScheduledJob | undefined {
+  return db.prepare(`
+    SELECT * FROM scheduled_jobs
+    WHERE status = 'pending' AND group_id = ? AND kind = 'drop'
+    ORDER BY run_at ASC LIMIT 1
+  `).get(groupId) as ScheduledJob | undefined;
+}
+
+export function getPendingResolveJobForGroup(db: Database.Database, groupId: number): ScheduledJob | undefined {
+  return db.prepare(`
+    SELECT * FROM scheduled_jobs
+    WHERE status = 'pending' AND group_id = ? AND kind = 'resolve'
+    ORDER BY run_at ASC LIMIT 1
+  `).get(groupId) as ScheduledJob | undefined;
+}
+
+export function jobExistsForScheduleSlot(db: Database.Database, scheduleId: number, runAt: string): boolean {
+  const row = db.prepare(`
+    SELECT 1 FROM scheduled_jobs WHERE schedule_id = ? AND run_at = ? LIMIT 1
+  `).get(scheduleId, runAt);
+  return !!row;
+}
+
+export function markJobDone(db: Database.Database, id: number): void {
+  db.prepare(`
+    UPDATE scheduled_jobs SET status = 'done', executed_at = datetime('now') WHERE id = ?
+  `).run(id);
+}
+
+export function markJobFailed(db: Database.Database, id: number, error: string): void {
+  db.prepare(`
+    UPDATE scheduled_jobs SET status = 'failed', executed_at = datetime('now'), error = ? WHERE id = ?
+  `).run(error, id);
+}
+
+export function markJobSkipped(db: Database.Database, id: number, reason: string): void {
+  db.prepare(`
+    UPDATE scheduled_jobs SET status = 'skipped', executed_at = datetime('now'), error = ? WHERE id = ?
+  `).run(reason, id);
+}
+
 // ---- Global bot config (not per-group) ----
 
 export function getBotConfig(db: Database.Database, key: string): string {

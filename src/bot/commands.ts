@@ -3,7 +3,11 @@ import type Database from 'better-sqlite3';
 import { config, BUILD_SHA, BUILD_DATE } from '../config.js';
 import * as db from '../db/queries.js';
 import { canBailout } from '../game/scoring.js';
-import { getProjectByDay, doResolve, doDrop, cancelAutoResolve } from '../game/engine.js';
+import { getProjectByDay } from '../game/engine.js';
+import {
+  triggerManualDrop, triggerManualResolve, cancelPendingResolveForGroup,
+  cancelInFlight, parseDaysOfWeek, parseTimeUtc,
+} from '../game/scheduler.js';
 import { generateBannerPNG } from '../game/banner.js';
 import {
   formatStart, formatHelp, formatPortfolio, formatLeaderboard,
@@ -51,15 +55,14 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       db.setBotConfig(database, 'group_chat_id', String(ctx.chat.id));
       await ctx.reply(`⚡ group switched to ${ctx.chat.id}`);
     }
-    // Optional resolve time override
+    // Optional resolve time override (per-call, not persisted)
     const arg = ctx.match?.trim();
+    let resolveDelayMinutes: number | undefined;
     if (arg) {
       const mins = parseInt(arg, 10);
-      if (!isNaN(mins) && mins > 0) {
-        config.resolveDelayMinutes = mins;
-      }
+      if (!isNaN(mins) && mins > 0) resolveDelayMinutes = mins;
     }
-    const result = await doDrop(bot, database);
+    const result = await triggerManualDrop(bot, database, config.groupChatId, resolveDelayMinutes);
     await ctx.reply(result.message);
   });
 
@@ -67,8 +70,7 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
   bot.command('resolve', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
-    cancelAutoResolve();
-    const result = await doResolve(bot, database);
+    const result = await triggerManualResolve(bot, database, config.groupChatId);
     await ctx.reply(result.message);
   });
 
@@ -110,9 +112,8 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
   bot.command('nextday', async (ctx) => {
     const user = extractUser(ctx);
     if (!user || !isAdmin(user.userId)) return;
-    cancelAutoResolve();
-    const resolveResult = await doResolve(bot, database);
-    const dropResult = await doDrop(bot, database);
+    const resolveResult = await triggerManualResolve(bot, database, config.groupChatId);
+    const dropResult = await triggerManualDrop(bot, database, config.groupChatId);
     await ctx.reply(`resolve: ${resolveResult.message}\ndrop: ${dropResult.message}`);
   });
 
@@ -127,7 +128,7 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       return;
     }
     const g = config.groupChatId;
-    cancelAutoResolve();
+    cancelPendingResolveForGroup(database, config.groupChatId);
     db.setGroupState(database, g, 'current_day', String(day));
     db.setGroupState(database, g, 'round_status', 'closed');
     await ctx.reply(`⚠️ game state forced to day ${day}. use /drop to open the next round.`);
@@ -143,7 +144,7 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       return;
     }
     const g = config.groupChatId;
-    cancelAutoResolve();
+    cancelPendingResolveForGroup(database, config.groupChatId);
     db.setGroupState(database, g, 'current_day', '0');
     db.setGroupState(database, g, 'round_status', 'closed');
     db.setGroupState(database, g, 'last_resolution_date', '');
@@ -164,7 +165,7 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       return;
     }
     const g = config.groupChatId;
-    cancelAutoResolve();
+    cancelPendingResolveForGroup(database, config.groupChatId);
     database.prepare('DELETE FROM bets WHERE group_id = ?').run(g);
     database.prepare('DELETE FROM group_players WHERE group_id = ?').run(g);
     db.setGroupState(database, g, 'current_day', '0');
@@ -258,6 +259,161 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     const day = db.getCurrentDay(database, newGroupId);
     const players = db.getPlayerCount(database, newGroupId);
     await ctx.reply(`✅ group set to ${newGroupId}\nstate: day ${day}/30, ${players} players`);
+  });
+
+  // /schedule — admin only: list / add / rm / on / off recurring schedules
+  // Usage:
+  //   /schedule                             → list for active group
+  //   /schedule add mon,wed,fri 14:00 60    → days, HH:MM UTC, optional delay min
+  //   /schedule rm 3                        → delete schedule #3
+  //   /schedule on 3                        → enable
+  //   /schedule off 3                       → disable
+  bot.command('schedule', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const g = config.groupChatId;
+    const raw = (ctx.match?.trim() ?? '');
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    const sub = tokens[0]?.toLowerCase();
+
+    // List (no sub or 'list')
+    if (!sub || sub === 'list') {
+      const schedules = db.getSchedulesForGroup(database, g);
+      const title = db.getGroupState(database, g, 'group_title') || String(g);
+      if (schedules.length === 0) {
+        await ctx.reply(
+          `no schedules for ${title}.\n\n` +
+          `usage: /schedule add mon,wed,fri 14:00 60`
+        );
+        return;
+      }
+      const lines = [`📅 schedules for ${title} (${schedules.length}):`, ''];
+      for (const s of schedules) {
+        const status = s.enabled ? '✓' : '✗ disabled';
+        const delay = `${s.resolve_delay_minutes}min`;
+        lines.push(`[${s.id}] ${s.days_of_week} @ ${s.time_utc} UTC · resolve ${delay} · ${status}`);
+      }
+      lines.push('', 'commands: /schedule add <days> <HH:MM> [delay] · rm <id> · on <id> · off <id>');
+      await ctx.reply(lines.join('\n'));
+      return;
+    }
+
+    if (sub === 'add') {
+      if (tokens.length < 3) {
+        await ctx.reply('usage: /schedule add <days> <HH:MM> [delay_minutes]\nexample: /schedule add mon,wed,fri 14:00 60');
+        return;
+      }
+      const daysRaw = tokens[1];
+      const timeRaw = tokens[2];
+      const delayRaw = tokens[3];
+      const days = parseDaysOfWeek(daysRaw);
+      const time = parseTimeUtc(timeRaw);
+      if (!days) {
+        await ctx.reply('invalid days. use mon,tue,wed,thu,fri,sat,sun (comma-separated).');
+        return;
+      }
+      if (!time) {
+        await ctx.reply('invalid time. use HH:MM (24h UTC), e.g. 14:00 or 09:30.');
+        return;
+      }
+      let delay = config.resolveDelayMinutes;
+      if (delayRaw) {
+        const n = parseInt(delayRaw, 10);
+        if (isNaN(n) || n <= 0) {
+          await ctx.reply('invalid delay. use a positive integer in minutes.');
+          return;
+        }
+        delay = n;
+      }
+      const daysCsv = days.join(',');
+      const timeFmt = `${String(time.h).padStart(2, '0')}:${String(time.m).padStart(2, '0')}`;
+      const id = db.insertSchedule(database, g, daysCsv, timeFmt, delay);
+      await ctx.reply(`✅ schedule [${id}] added: ${daysCsv} @ ${timeFmt} UTC · resolve ${delay}min · enabled`);
+      return;
+    }
+
+    if (sub === 'rm' || sub === 'remove' || sub === 'delete') {
+      const id = parseInt(tokens[1] ?? '', 10);
+      if (isNaN(id)) {
+        await ctx.reply('usage: /schedule rm <id>');
+        return;
+      }
+      const schedule = db.getScheduleById(database, id);
+      if (!schedule || schedule.group_id !== g) {
+        await ctx.reply(`schedule #${id} not found in this group.`);
+        return;
+      }
+      db.deleteSchedule(database, id);
+      await ctx.reply(`✅ schedule [${id}] deleted. already-materialized jobs keep firing — use /jobs rm to cancel them.`);
+      return;
+    }
+
+    if (sub === 'on' || sub === 'off') {
+      const id = parseInt(tokens[1] ?? '', 10);
+      if (isNaN(id)) {
+        await ctx.reply(`usage: /schedule ${sub} <id>`);
+        return;
+      }
+      const schedule = db.getScheduleById(database, id);
+      if (!schedule || schedule.group_id !== g) {
+        await ctx.reply(`schedule #${id} not found in this group.`);
+        return;
+      }
+      db.setScheduleEnabled(database, id, sub === 'on');
+      await ctx.reply(`✅ schedule [${id}] ${sub === 'on' ? 'enabled' : 'disabled'}.`);
+      return;
+    }
+
+    await ctx.reply('usage: /schedule [list|add|rm|on|off] ...');
+  });
+
+  // /jobs — admin only: list next pending jobs for the active group, or cancel one
+  // Usage:
+  //   /jobs              → list next 10
+  //   /jobs rm <id>      → cancel a pending job
+  bot.command('jobs', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const g = config.groupChatId;
+    const raw = (ctx.match?.trim() ?? '');
+    const tokens = raw.split(/\s+/).filter(Boolean);
+    const sub = tokens[0]?.toLowerCase();
+
+    if (sub === 'rm' || sub === 'cancel') {
+      const id = parseInt(tokens[1] ?? '', 10);
+      if (isNaN(id)) {
+        await ctx.reply('usage: /jobs rm <id>');
+        return;
+      }
+      const job = db.getJobById(database, id);
+      if (!job || job.group_id !== g) {
+        await ctx.reply(`job #${id} not found in this group.`);
+        return;
+      }
+      if (job.status !== 'pending') {
+        await ctx.reply(`job #${id} is ${job.status}, cannot cancel.`);
+        return;
+      }
+      cancelInFlight(id);
+      db.markJobSkipped(database, id, 'canceled by admin');
+      await ctx.reply(`✅ job #${id} canceled.`);
+      return;
+    }
+
+    const jobs = db.getPendingJobsForGroup(database, g, 10);
+    const title = db.getGroupState(database, g, 'group_title') || String(g);
+    if (jobs.length === 0) {
+      await ctx.reply(`no pending jobs for ${title}.`);
+      return;
+    }
+    const lines = [`⏱ next ${jobs.length} pending jobs for ${title}:`, ''];
+    for (const j of jobs) {
+      const when = j.run_at.replace('T', ' ').replace(/:\d\d\..*/, '').replace(/-/g, '-');
+      const src = j.schedule_id ? `schedule #${j.schedule_id}` : 'manual';
+      lines.push(`[${j.id}] ${j.kind.padEnd(7)} ${when} UTC · ${src}`);
+    }
+    lines.push('', 'cancel one with /jobs rm <id>');
+    await ctx.reply(lines.join('\n'));
   });
 
   // /announcement <datetime> — admin only: post game teaser with banner to the group

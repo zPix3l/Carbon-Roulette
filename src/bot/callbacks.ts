@@ -120,7 +120,7 @@ export function registerCallbacks(bot: Bot, database: Database.Database): void {
     await ctx.reply(formatBetConfirmation(choice, amount, player.balance));
 
     // Update live bet counter on group drop message
-    updateDropBetCount(bot, database).catch(() => {});
+    updateDropBetCount(bot, database, config.groupChatId).catch(() => {});
   });
 }
 

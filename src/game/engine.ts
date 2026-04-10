@@ -12,9 +12,6 @@ import { generateBannerPNG } from './banner.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-// Auto-resolve timer
-let resolveTimer: ReturnType<typeof setTimeout> | null = null;
-
 // Load projects from JSON
 let projects: Project[];
 
@@ -30,16 +27,23 @@ export function getProjectByDay(day: number): Project | undefined {
   return loadProjects().find(p => p.day === day);
 }
 
+export function getTotalDays(): number {
+  return loadProjects().length;
+}
+
 // ============================================================
-// CORE LOGIC — no date guards, called by admin commands
+// CORE LOGIC — called by scheduler (and by admin commands via scheduler)
 // ============================================================
 
 /**
  * Resolve current day: calculate payouts, post verdict in group.
- * Always operates on the active group (config.groupChatId).
+ * Operates on the specified group.
  */
-export async function doResolve(bot: Bot, database: Database.Database): Promise<{ ok: boolean; message: string }> {
-  const groupId = config.groupChatId;
+export async function doResolve(
+  bot: Bot,
+  database: Database.Database,
+  groupId: number,
+): Promise<{ ok: boolean; message: string }> {
   const currentDay = db.getCurrentDay(database, groupId);
   if (currentDay <= 0) {
     return { ok: false, message: 'no active day to resolve.' };
@@ -140,16 +144,26 @@ export async function doResolve(bot: Bot, database: Database.Database): Promise<
   return { ok: true, message: `day ${currentDay} resolved. ${results.length} bets processed.` };
 }
 
+export interface DropPayload {
+  resolve_delay_minutes?: number;
+}
+
 /**
  * Publish a new drop: increment day, post teaser in group with PLAY + LEARN buttons.
- * Always operates on the active group (config.groupChatId).
+ * Operates on the specified group.
  */
-export async function doDrop(bot: Bot, database: Database.Database): Promise<{ ok: boolean; message: string }> {
-  const groupId = config.groupChatId;
+export async function doDrop(
+  bot: Bot,
+  database: Database.Database,
+  groupId: number,
+  payload?: DropPayload,
+): Promise<{ ok: boolean; message: string; resolveDelayMinutes: number }> {
+  const resolveDelayMinutes = payload?.resolve_delay_minutes ?? config.resolveDelayMinutes;
   const currentDay = db.getCurrentDay(database, groupId);
   const nextDay = currentDay + 1;
+  const totalDays = getTotalDays();
 
-  if (nextDay > 30) {
+  if (nextDay > totalDays) {
     // Game over
     try {
       const top = db.getLeaderboard(database, groupId, 10);
@@ -164,12 +178,12 @@ export async function doDrop(bot: Bot, database: Database.Database): Promise<{ o
     } catch (err) {
       console.error('failed to send game over:', err);
     }
-    return { ok: false, message: 'game over. all 30 days played.' };
+    return { ok: false, message: `game over. all ${totalDays} days played.`, resolveDelayMinutes };
   }
 
   const project = getProjectByDay(nextDay);
   if (!project) {
-    return { ok: false, message: `no project found for day ${nextDay}.` };
+    return { ok: false, message: `no project found for day ${nextDay}.`, resolveDelayMinutes };
   }
 
   // Advance game state
@@ -189,69 +203,35 @@ export async function doDrop(bot: Bot, database: Database.Database): Promise<{ o
     .url('📚 LEARN', LEARN_URL);
 
   try {
-    const bannerBuf = await generateBannerPNG(config.resolveDelayMinutes);
+    const bannerBuf = await generateBannerPNG(resolveDelayMinutes);
     const sent = await bot.api.sendPhoto(groupId, new InputFile(bannerBuf, 'banner.png'), {
       caption: dropMsg,
       reply_markup: keyboard,
     });
     // Store message_id for verdict reply + live counter updates
     db.setGroupState(database, groupId, 'drop_message_id', String(sent.message_id));
-    console.log(`[drop] day ${nextDay} posted to group (msg_id: ${sent.message_id})`);
+    console.log(`[drop] group ${groupId} day ${nextDay} posted (msg_id: ${sent.message_id})`);
   } catch (err) {
     console.error('failed to send drop to group:', err);
-    return { ok: false, message: `day advanced to ${nextDay} but failed to post in group: ${err}` };
+    return { ok: false, message: `day advanced to ${nextDay} but failed to post in group: ${err}`, resolveDelayMinutes };
   }
 
-  // Schedule auto-resolve
-  scheduleAutoResolve(bot, database);
-
-  const delayMin = config.resolveDelayMinutes;
-  return { ok: true, message: `day ${nextDay}/30 dropped. auto-resolve in ${delayMin}min.` };
-}
-
-/**
- * Schedule automatic resolution after the configured delay.
- * Cancels any previously scheduled timer.
- */
-function scheduleAutoResolve(bot: Bot, database: Database.Database): void {
-  // Cancel previous timer if any
-  if (resolveTimer) {
-    clearTimeout(resolveTimer);
-    resolveTimer = null;
-  }
-
-  const delayMs = config.resolveDelayMinutes * 60 * 1000;
-  console.log(`[timer] auto-resolve scheduled in ${config.resolveDelayMinutes}min`);
-
-  resolveTimer = setTimeout(async () => {
-    console.log(`[timer] auto-resolve firing...`);
-    try {
-      const result = await doResolve(bot, database);
-      console.log(`[timer] ${result.message}`);
-    } catch (err) {
-      console.error('[timer] auto-resolve error:', err);
-    }
-    resolveTimer = null;
-  }, delayMs);
-}
-
-/**
- * Cancel the auto-resolve timer (used by /resolve when admin resolves manually).
- */
-export function cancelAutoResolve(): void {
-  if (resolveTimer) {
-    clearTimeout(resolveTimer);
-    resolveTimer = null;
-    console.log('[timer] auto-resolve cancelled (manual resolve)');
-  }
+  return {
+    ok: true,
+    message: `day ${nextDay}/${totalDays} dropped. auto-resolve in ${resolveDelayMinutes}min.`,
+    resolveDelayMinutes,
+  };
 }
 
 /**
  * Update the group drop message with the current bet count.
  * Called each time a player places a bet.
  */
-export async function updateDropBetCount(bot: Bot, database: Database.Database): Promise<void> {
-  const groupId = config.groupChatId;
+export async function updateDropBetCount(
+  bot: Bot,
+  database: Database.Database,
+  groupId: number,
+): Promise<void> {
   const currentDay = db.getCurrentDay(database, groupId);
   const dropMsgId = db.getGroupState(database, groupId, 'drop_message_id');
   if (!dropMsgId || currentDay <= 0) {

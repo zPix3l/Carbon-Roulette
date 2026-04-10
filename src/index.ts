@@ -5,6 +5,7 @@ import { getBotConfig } from './db/queries.js';
 import { registerCommands } from './bot/commands.js';
 import { registerCallbacks } from './bot/callbacks.js';
 import { loadProjects } from './game/engine.js';
+import { startScheduler } from './game/scheduler.js';
 
 async function main() {
   const projects = loadProjects();
@@ -45,6 +46,9 @@ async function main() {
     { command: 'leaderboard', description: 'top 10' },
     { command: 'help', description: 'rules' },
   ]);
+
+  // Start the persisted scheduler (replaces in-memory auto-resolve timer)
+  startScheduler(bot, database);
 
   bot.start({
     onStart: () => console.log('carbon roulette is live. use /drop to start the game.'),
