@@ -323,7 +323,7 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
   // /schedule — admin only: list / add / rm / on / off recurring schedules
   // Usage:
   //   /schedule                             → list for active group
-  //   /schedule add mon,wed,fri 14:00 60    → days, HH:MM UTC, optional delay min
+  //   /schedule add mon,wed,fri 14:00       → days, HH:MM UTC (resolve delay read from group config)
   //   /schedule rm 3                        → delete schedule #3
   //   /schedule on 3                        → enable
   //   /schedule off 3                       → disable
@@ -342,7 +342,8 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       if (schedules.length === 0) {
         await ctx.reply(
           `no schedules for ${title}.\n\n` +
-          `usage: /schedule add mon,wed,fri 14:00 60`
+          `usage: /schedule add mon,wed,fri 14:00\n` +
+          `resolve delay is set per-group with /setresolvedelay.`
         );
         return;
       }
