@@ -7,7 +7,7 @@ A Telegram bot game where players bet points on whether daily fictional carbon c
 - **Runtime:** Node.js + TypeScript (ES2022, NodeNext modules)
 - **Bot framework:** [grammy](https://grammy.dev/)
 - **Database:** SQLite via `better-sqlite3` (WAL mode), file at `data/carbon-roulette.db`
-- **Scheduling:** in-memory `setTimeout` for round resolve (no cron) — see "Known limitations"
+- **Scheduling:** persisted job queue in SQLite (`scheduled_jobs` + `schedules`), boot-time recovery + 60s tick — see `src/game/scheduler.ts` and `docs/scheduler-spec.md`
 - **Image generation:** `sharp` for the drop banner PNG (`src/game/banner.ts`)
 
 ## Layout
@@ -21,6 +21,7 @@ src/
 │   └── callbacks.ts  # Inline button handlers (BUY/PASS, amount, switchgroup)
 ├── game/
 │   ├── engine.ts     # doDrop, doResolve, updateDropBetCount
+│   ├── scheduler.ts  # Persisted job queue: boot recovery, tick, materialize, runJob
 │   ├── messages.ts   # All message templates (lowercase/direct tone)
 │   ├── scoring.ts    # Payout math, streak multipliers
 │   ├── banner.ts     # Dynamic SVG → PNG drop banner
@@ -48,6 +49,8 @@ Each Telegram group has fully isolated state. The active group is tracked global
 | `bets` | per `(telegram_id, project_day, group_id)` | UNIQUE constraint prevents double bet |
 | `group_state` | per `(group_id, key)` | Per-group k/v: `current_day`, `round_status`, `drop_message_id`, `group_title`, … |
 | `bot_config` | global k/v | Currently only `group_chat_id` (active group) |
+| `schedules` | per `group_id` | Recurring drop schedules: `days_of_week` (CSV) × `time_utc` × `resolve_delay_minutes`, `enabled` flag |
+| `scheduled_jobs` | per `group_id` | Concrete job instances (`kind='drop'|'resolve'`, `run_at` ISO, `status='pending|done|failed|skipped'`). One-off (manual `/drop`) or materialized from a schedule (`schedule_id` set). |
 
 `src/db/schema.ts` includes a one-shot migration from the legacy single-tenant schema (detects old `game_state` table, moves all data under the saved or env-provided group_id, recreates `players`/`bets` with the new columns, drops `game_state`). Safe to re-run; idempotent.
 
@@ -68,8 +71,10 @@ All query functions in `src/db/queries.ts` take `groupId` as a parameter — nev
 ### Admin only (gated by `ADMIN_USER_ID`)
 | Cmd | Notes |
 |---|---|
-| `/drop [minutes]` | Post the next round. Optional arg overrides `RESOLVE_DELAY_MINUTES`. If sent inside a group chat that isn't the active one, **auto-switches** to that group first. |
-| `/resolve` | Force-resolve current round (manual; use if the auto-resolve timer was lost across restart) |
+| `/drop [minutes]` | Post the next round. Optional arg overrides `RESOLVE_DELAY_MINUTES` for this round only. If sent inside a group chat that isn't the active one, **auto-switches** to that group first. Routed through `triggerManualDrop` (synchronous nudge — inserts a job AND runs it immediately). |
+| `/resolve` | Force-resolve the current open round. Cancels any pending resolve job for the group first. |
+| `/schedule list\|add\|rm\|on\|off` | Manage recurring drop schedules. `add <days> HH:MM [delay_min]` where `<days>` is CSV like `mon,wed,fri`. Times are UTC. |
+| `/jobs` / `/jobs rm <id>` | List pending jobs / cancel one (marks it `skipped` and clears the in-memory timer). |
 | `/announcement` | Post the one-time teaser to the active group |
 | `/status` | Active group, day, round status, player count, group ID |
 | `/version` | Build SHA + date |
@@ -84,24 +89,28 @@ The middleware in `commands.ts` opportunistically saves `group_title` into `grou
 
 ## Round lifecycle
 
-1. Admin runs `/drop` (or `/drop 30` to override resolve delay).
-2. `doDrop` (`src/game/engine.ts`):
+1. A drop is triggered by either admin `/drop` (manual nudge) or a recurring schedule that the tick just materialized. Both paths go through `runJob → executeDrop` in `src/game/scheduler.ts`.
+2. `executeDrop` enforces the **single-open-round invariant**: if `round_status === 'open'` when the drop fires, it auto-resolves the previous round first and marks its pending resolve job `skipped: superseded by auto-resolve before next drop`.
+3. `doDrop` (`src/game/engine.ts`):
    - Increments `current_day` for the active group
    - Picks the project from `projects.json`
-   - Generates the banner PNG
-   - Sends photo + caption + INVESTIGATE/LEARN inline keyboard to the group
+   - Generates the banner PNG, sends photo + caption + INVESTIGATE/LEARN inline keyboard to the group
    - Stores `drop_message_id`, sets `round_status = 'open'`
-   - Schedules `doResolve` via `setTimeout(resolveDelayMinutes * 60_000)`
-3. Players DM the bot, see the case file, choose BUY/PASS, then bet amount (50/100/250/ALL IN).
-4. `updateDropBetCount` edits the original drop message caption to show live investigator count.
-5. `doResolve`:
+4. `executeDrop` then inserts the companion **resolve job** at `now + resolveDelayMinutes` into `scheduled_jobs`. No in-memory timer — the job is now fully persisted.
+5. Players DM the bot, see the case file, choose BUY/PASS, then bet amount (50/100/250/ALL IN). `updateDropBetCount` edits the original drop caption to show the live investigator count.
+6. When the resolve job fires (either via its in-memory `setTimeout` pointer or via boot-time recovery after a crash), `executeResolve → doResolve`:
    - Sets `round_status = 'closed'`
-   - Computes payouts (`src/game/scoring.ts`), updates balances + streaks atomically
-   - Edits the drop caption to "CLOSED" state
-   - Posts the verdict message as a reply to the original drop
+   - Computes payouts, updates balances + streaks atomically
+   - Edits the drop caption to "CLOSED"
+   - Posts the verdict as a reply to the original drop
 
-### Known limitations
-- The auto-resolve timer is **in-memory**. If the bot restarts after a `/drop` but before resolve, you must manually `/resolve`.
+### Scheduler internals (`src/game/scheduler.ts`)
+
+- **Boot recovery:** `startScheduler()` loads all `pending` jobs and schedules them via `schedulePendingJob`. Jobs whose `run_at` is within the 4h catch-up window are executed immediately; jobs older than 4h are marked `skipped: stale on boot`.
+- **Tick:** every 60s (and once on boot) `tick()` materializes concrete drop jobs from active schedules for the next 24h, deduplicated via `jobExistsForScheduleSlot`. Also re-picks any pending jobs not already in flight (defense in depth).
+- **inFlight map:** the scheduler reserves every job id in an in-memory `Map` **before** calling `runJob`, in both the catch-up and future-setTimeout branches, and clears it via `.finally()` only after execution completes. Without this, the boot-loop + immediate-tick combo would double-execute any catch-up job (bug was found during scheduler end-to-end testing on 2026-04-11 — see commit 8373450).
+- **Game-over guard:** if `current_day >= totalDays` when a drop fires, the scheduler disables the source schedule (`setScheduleEnabled(false)`) and marks the job `skipped: game over`.
+- **Manual nudge:** `/drop` calls `triggerManualDrop` which inserts the job AND calls `runJob` synchronously, so the admin doesn't wait up to 60s for the next tick.
 
 ## Scoring
 
