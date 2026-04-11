@@ -217,19 +217,6 @@ export async function doDrop(
     .url('🔍 INVESTIGATE', `https://t.me/${botUsername}?start=play_${nextDay}`)
     .url('📚 LEARN', LEARN_URL);
 
-  // Unpin any previous pre-drop announcement for this group before posting.
-  // The announce's job was to notify via the pin event; now that the drop is
-  // here, clean up the pin so the chat isn't cluttered. Non-fatal on failure.
-  const pinnedAnnounceId = db.getGroupState(database, groupId, 'pinned_announce_message_id');
-  if (pinnedAnnounceId) {
-    try {
-      await bot.api.unpinChatMessage(groupId, parseInt(pinnedAnnounceId, 10));
-    } catch (err) {
-      console.log(`[drop] failed to unpin previous announce (${pinnedAnnounceId}):`, err);
-    }
-    db.setGroupState(database, groupId, 'pinned_announce_message_id', '');
-  }
-
   try {
     const bannerBuf = await generateBannerPNG(resolveDelayMinutes);
     const sent = await bot.api.sendPhoto(groupId, new InputFile(bannerBuf, 'banner.png'), {

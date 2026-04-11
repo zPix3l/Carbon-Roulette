@@ -337,35 +337,20 @@ async function executeAnnounce(bot: Bot, database: Database.Database, job: db.Sc
   const caption = formatDropAnnouncement(dropRunAt, new Date(), totalDays);
   const keyboard = new InlineKeyboard().url('📚 LEARN', LEARN_URL);
 
-  let announceMessageId: number | null = null;
   try {
     // Reuse the drop banner visual — reads the resolve delay from group config so
     // the banner's "YOU HAVE X HOUR(S)" matches what the upcoming drop will use.
     const resolveDelay =
       db.getGroupResolveDelayMinutes(database, groupId) ?? 60;
     const bannerBuf = await generateBannerPNG(resolveDelay);
-    const sent = await bot.api.sendPhoto(groupId, new InputFile(bannerBuf, 'banner.png'), {
+    await bot.api.sendPhoto(groupId, new InputFile(bannerBuf, 'banner.png'), {
       caption,
       reply_markup: keyboard,
     });
-    announceMessageId = sent.message_id;
   } catch (err) {
     db.markJobFailed(database, job.id, err instanceof Error ? err.message : String(err));
     console.error(`[scheduler] announce #${job.id} failed:`, err);
     return;
-  }
-
-  // Pin with notification — this is the whole point of announcements: reach every
-  // member, including those who muted the group. The pin will be removed when the
-  // companion drop fires (see doDrop). Failures here are non-fatal: the message
-  // is already posted, we just lose the broadcast notification.
-  if (announceMessageId !== null) {
-    try {
-      await bot.api.pinChatMessage(groupId, announceMessageId);
-      db.setGroupState(database, groupId, 'pinned_announce_message_id', String(announceMessageId));
-    } catch (err) {
-      console.error(`[announce #${job.id}] failed to pin (bot needs can_pin_messages):`, err);
-    }
   }
 
   db.markJobDone(database, job.id);
