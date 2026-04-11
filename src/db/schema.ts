@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
-import { mkdirSync } from 'fs';
+import { mkdirSync, existsSync } from 'fs';
 
 const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'carbon-roulette.db');
 
@@ -10,6 +10,11 @@ export function initDb(): Database.Database {
   const db = new Database(DB_PATH);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
+
+  // Safety net: if either migration is about to run, snapshot the DB first
+  // via VACUUM INTO. Pure insurance — we can rollback by swapping files if
+  // anything goes wrong. No-op on fresh installs and on already-migrated DBs.
+  backupBeforeMigration(db, DB_PATH);
 
   // Migrate old single-tenant schema if detected
   migrateIfNeeded(db);
@@ -103,6 +108,56 @@ export function initDb(): Database.Database {
   `);
 
   return db;
+}
+
+// ---------------------------------------------------------------------------
+// Pre-migration DB snapshot
+// ---------------------------------------------------------------------------
+
+/**
+ * If the database is about to undergo a schema migration, take a fresh,
+ * transactionally-consistent snapshot into `data/backups/` via SQLite's
+ * VACUUM INTO. Pure safety net — restore by stopping the bot and swapping
+ * files. No-op on fresh installs and on already-migrated DBs.
+ *
+ * VACUUM INTO is atomic and doesn't lock/modify the source, so this is safe
+ * to run on a DB the bot has just opened (WAL mode included).
+ */
+function backupBeforeMigration(db: Database.Database, dbPath: string): void {
+  if (!existsSync(dbPath)) return; // brand-new file, nothing to back up
+
+  if (!migrationWillRun(db)) return;
+
+  const backupDir = path.join(path.dirname(dbPath), 'backups');
+  mkdirSync(backupDir, { recursive: true });
+  const ts = new Date().toISOString().replace(/[:.]/g, '-').replace('Z', '');
+  const backupPath = path.join(backupDir, `carbon-roulette-pre-migration-${ts}.db`);
+
+  try {
+    // Path needs SQL-level single-quote escaping (VACUUM INTO takes a literal)
+    db.exec(`VACUUM INTO '${backupPath.replace(/'/g, "''")}'`);
+    console.log(`[backup] pre-migration DB snapshot: ${backupPath}`);
+  } catch (err) {
+    // Fail loudly — we'd rather crash than migrate without a backup
+    console.error('[backup] VACUUM INTO failed, aborting startup:', err);
+    throw err;
+  }
+}
+
+function migrationWillRun(db: Database.Database): boolean {
+  // Old single-tenant schema (legacy migration)
+  const hasGameState = db.prepare(
+    `SELECT name FROM sqlite_master WHERE type='table' AND name='game_state'`,
+  ).get();
+  if (hasGameState) return true;
+
+  // Old scheduled_jobs CHECK (missing 'announce')
+  const jobsTable = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='scheduled_jobs'`,
+  ).get() as { sql: string } | undefined;
+  if (jobsTable && !jobsTable.sql.includes("'announce'")) return true;
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------
