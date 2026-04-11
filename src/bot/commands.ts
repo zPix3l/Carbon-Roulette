@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import { config, BUILD_SHA, BUILD_DATE } from '../config.js';
 import * as db from '../db/queries.js';
 import { canBailout } from '../game/scoring.js';
-import { getProjectByDay } from '../game/engine.js';
+import { getProjectByDay, getTotalDays } from '../game/engine.js';
 import {
   triggerManualDrop, triggerManualResolve, cancelPendingResolveForGroup,
   cancelInFlight, parseDaysOfWeek, parseTimeUtc,
@@ -11,7 +11,8 @@ import {
 import { generateBannerPNG } from '../game/banner.js';
 import {
   formatStart, formatHelp, formatPortfolio, formatLeaderboard,
-  formatBailout, formatDrop, formatGoToDM, formatAnnouncement, LEARN_URL,
+  formatBailout, formatDrop, formatGoToDM, formatAnnouncement,
+  formatDropAnnouncement, LEARN_URL,
 } from '../game/messages.js';
 
 function extractUser(ctx: { from?: { id: number; username?: string; first_name?: string } }) {
@@ -490,6 +491,49 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       reply_markup: keyboard,
     });
     await ctx.reply('✅ announcement posted to the group.');
+  });
+
+  // /testannounce — admin only: preview a pre-drop announcement IN THE CURRENT CHAT.
+  // Posts to ctx.chat (not config.groupChatId), so you can try it in a test group
+  // without switching the active group. No DB writes, no schedule side-effects.
+  //
+  // Usage:
+  //   /testannounce                → simulates drop today at +6h
+  //   /testannounce 2026-04-13T16:00:00Z  → simulates a specific drop time (ISO UTC)
+  bot.command('testannounce', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    if (!ctx.chat) return;
+
+    const arg = ctx.match?.trim();
+    let dropRunAt: Date;
+    if (arg) {
+      const parsed = new Date(arg);
+      if (isNaN(parsed.getTime())) {
+        await ctx.reply('invalid ISO date. example: /testannounce 2026-04-13T16:00:00Z');
+        return;
+      }
+      dropRunAt = parsed;
+    } else {
+      dropRunAt = new Date(Date.now() + 6 * 60 * 60 * 1000); // +6h from now
+    }
+
+    const caption = formatDropAnnouncement(dropRunAt, new Date(), getTotalDays());
+    // Use the active group's resolve delay for the banner's "YOU HAVE X HOURS" line
+    const resolveDelay =
+      db.getGroupResolveDelayMinutes(database, config.groupChatId)
+      ?? config.resolveDelayMinutes;
+    const bannerBuf = await generateBannerPNG(resolveDelay);
+    const keyboard = new InlineKeyboard().url('📚 LEARN', LEARN_URL);
+
+    try {
+      await bot.api.sendPhoto(ctx.chat.id, new InputFile(bannerBuf, 'banner.png'), {
+        caption,
+        reply_markup: keyboard,
+      });
+    } catch (err) {
+      await ctx.reply(`failed to post preview: ${err}`);
+    }
   });
 
   // ---- PLAYER COMMANDS ----
