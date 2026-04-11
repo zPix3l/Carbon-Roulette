@@ -78,6 +78,7 @@ All query functions in `src/db/queries.ts` take `groupId` as a parameter — nev
 | `/setannounce <min>` | Per-group pre-drop announcement lead time (minutes before each scheduled drop). `0` disables. Only applies to scheduled drops — not manual `/drop`. Materialized alongside drops during the 24h tick, posted as a photo with banner + LEARN button. |
 | `/jobs` / `/jobs rm <id>` | List pending jobs / cancel one (marks it `skipped` and clears the in-memory timer). |
 | `/announcement` | Post the one-time teaser to the active group |
+| `/testannounce [ISO]` | Preview a pre-drop announcement **in the current chat** (not the active group). Read-only, no DB writes, no schedule side-effects. Optional ISO-UTC arg to simulate a specific drop time; defaults to `now + 6h`. Useful for testing in a scratch group or in the admin's DM. |
 | `/status` | Active group, day, round status, player count, group ID |
 | `/version` | Build SHA + date |
 | `/groups` | List all known groups with inline buttons to switch active |
@@ -98,14 +99,18 @@ The middleware in `commands.ts` opportunistically saves `group_title` into `grou
    - Increments `current_day` for the active group
    - Picks the project from `projects.json`
    - Generates the banner PNG, sends photo + caption + INVESTIGATE/LEARN inline keyboard to the group
+   - **Pins the drop message** via `pinChatMessage` (with notification, so muted members still get pinged). Failures are logged and swallowed — needs `can_pin_messages` admin right in the group.
    - Stores `drop_message_id`, sets `round_status = 'open'`
 4. `executeDrop` then inserts the companion **resolve job** at `now + resolveDelayMinutes` into `scheduled_jobs`. No in-memory timer — the job is now fully persisted.
 5. Players DM the bot, see the case file, choose BUY/PASS, then bet amount (50/100/250/ALL IN). `updateDropBetCount` edits the original drop caption to show the live investigator count.
 6. When the resolve job fires (either via its in-memory `setTimeout` pointer or via boot-time recovery after a crash), `executeResolve → doResolve`:
    - Sets `round_status = 'closed'`
    - Computes payouts, updates balances + streaks atomically
+   - **Unpins the drop message** before editing (non-fatal if unpin fails)
    - Edits the drop caption to "CLOSED"
    - Posts the verdict as a reply to the original drop
+
+**Bot permission requirement:** for drop pinning to work, the bot must be an admin of the group with `can_pin_messages`. Without it, drops are still posted but not pinned, and the broadcast-notification effect is lost. Announces are never pinned — they go out as normal photo messages (standard Telegram notification, so only unmuted users get pinged).
 
 ### Scheduler internals (`src/game/scheduler.ts`)
 
