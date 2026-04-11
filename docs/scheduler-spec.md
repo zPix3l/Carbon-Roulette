@@ -308,3 +308,43 @@ On `feature/scheduler`:
   - Fires via a synchronous nudge right after insert (0s delay)
 
 I'll implement the **synchronous nudge** — the command inserts the job, calls `executeJob(job)` directly, and returns. The tick is only for schedule-generated jobs and catch-up safety. This keeps manual `/drop` feeling instant.
+
+---
+
+## Addendum v2 — per-group resolve delay + pre-drop announcements (`feature/announcements-resolve-config`)
+
+Landed after the core scheduler was in production. Two simple additions that layer on top of the existing job pipeline without touching the hot path.
+
+### Per-group resolve delay
+
+**Motivation:** the group admin wanted to change "round length" per group without editing env vars or per-schedule arguments.
+
+**Design:**
+- New `group_state` keys: `resolve_delay_minutes` (integer).
+- `doDrop` resolves the delay with precedence: **payload (`/drop N` one-shot) > group_state > env default**.
+- Schedules no longer embed their own `resolve_delay_minutes` in the drop-job payload; the column stays in the table for back-compat but is not read at execution time. Changing `/setresolvedelay` therefore takes effect retroactively for already-materialized drop jobs that haven't fired yet.
+- New admin command: `/setresolvedelay <minutes>`. `/schedule add` no longer accepts the delay argument.
+
+### Pre-drop announcements (new `kind='announce'`)
+
+**Motivation:** post a community-engagement teaser X minutes before every scheduled drop.
+
+**Design:**
+- New `group_state` key: `announce_minutes_before` (integer, `0` disables). Admin sets it with `/setannounce <minutes>`.
+- New job kind `announce`. Schema migration widens the `CHECK` constraint defensively (detected via `sqlite_master.sql`, rebuilds the table only when needed).
+- **Tick materialization:** for each drop slot produced by `materializeSlots`, if the group's `announce_minutes_before > 0`, tick inserts a companion `announce` job at `drop_run_at − X min`. Payload: `{ drop_run_at: <ISO> }`. Dedup key: `(schedule_id, json_extract(payload,'$.drop_run_at'))` via `announceExistsForScheduleDrop`.
+- **Execution:** `executeAnnounce` decodes `drop_run_at`, renders `formatDropAnnouncement` (dynamic `Today/Tomorrow/Weekday at HH:MM UTC` label computed from UTC calendar diff), and posts a photo + LEARN-only keyboard to the group.
+- **Skip conditions:**
+  1. `drop_run_at <= now` — drop already fired (manual `/drop` cut the line, or clock drift)
+  2. Companion drop job is no longer `pending` (canceled via `/jobs rm`, failed, or skipped game-over)
+  3. `current_day >= totalDays` — game over
+- Manual `/drop` does **not** trigger an announce. Only scheduled drops do.
+- The announce banner reuses `generateBannerPNG(resolveDelay)` where `resolveDelay` is read from the current group config — the banner's "YOU HAVE X HOUR(S)" pill stays consistent with what the upcoming drop will use.
+
+### Backward compatibility for existing prod deploys
+
+- Schema migration is idempotent: detects old `CHECK(kind IN ('drop','resolve'))` via `sqlite_master.sql`, rebuilds the `scheduled_jobs` table preserving all rows, recreates indexes. Skipped on fresh installs (new `CREATE TABLE` already has the widened check).
+- `getGroupResolveDelayMinutes` returns `null` when unset so the env default keeps working for groups that never ran `/setresolvedelay`.
+- `getGroupAnnounceMinutesBefore` defaults to `0`, so nothing happens until explicitly enabled.
+- The existing `schedules.resolve_delay_minutes` column is preserved but ignored at drop-execution time. `/schedule add` still writes it (set to the current group-level value or env default) to keep T3 and legacy readers happy.
+

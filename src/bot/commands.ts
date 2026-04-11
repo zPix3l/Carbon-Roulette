@@ -87,6 +87,12 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     const lastDrop = db.getGroupState(database, g, 'last_drop_date');
     const project = currentDay > 0 ? getProjectByDay(currentDay) : null;
     const statusEmoji = roundStatus === 'open' ? '🟢 OPEN' : roundStatus === 'closed' ? '🔒 CLOSED' : '⏸ IDLE';
+    const groupResolveDelay = db.getGroupResolveDelayMinutes(database, g);
+    const resolveDelayLabel = groupResolveDelay !== null
+      ? `${groupResolveDelay}min (group)`
+      : `${config.resolveDelayMinutes}min (env default)`;
+    const announceMinutes = db.getGroupAnnounceMinutesBefore(database, g);
+    const announceLabel = announceMinutes > 0 ? `${announceMinutes}min before drop` : 'disabled';
     await ctx.reply([
       `🔧 admin status`,
       `round: ${statusEmoji}`,
@@ -95,6 +101,8 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
       `answer: ${project ? (project.isLegit ? 'LEGIT' : 'INTEGRITY ISSUES') : '-'}`,
       `bets: ${betCount}`,
       `players: ${totalPlayers}`,
+      `resolve delay: ${resolveDelayLabel}`,
+      `announce: ${announceLabel}`,
       `last resolution: ${lastRes || 'never'}`,
       `last drop: ${lastDrop || 'never'}`,
       `group: ${g}`,
@@ -261,6 +269,57 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
     await ctx.reply(`✅ group set to ${newGroupId}\nstate: day ${day}/30, ${players} players`);
   });
 
+  // /setresolvedelay <minutes> — admin only: per-group resolve delay
+  // Applies to ALL drops in this group (manual /drop and scheduled). /drop N still
+  // overrides for one round. Persists across restarts.
+  bot.command('setresolvedelay', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const g = config.groupChatId;
+    const arg = ctx.match?.trim();
+    if (!arg) {
+      const current = db.getGroupResolveDelayMinutes(database, g);
+      const label = current !== null
+        ? `${current}min (group)`
+        : `${config.resolveDelayMinutes}min (env default)`;
+      await ctx.reply(`resolve delay: ${label}\nusage: /setresolvedelay <minutes>`);
+      return;
+    }
+    const n = parseInt(arg, 10);
+    if (isNaN(n) || n <= 0) {
+      await ctx.reply('invalid delay. use a positive integer in minutes.');
+      return;
+    }
+    db.setGroupResolveDelayMinutes(database, g, n);
+    await ctx.reply(`✅ resolve delay for this group set to ${n}min.\napplies to future drops (doesn't affect the currently open round).`);
+  });
+
+  // /setannounce <minutes> — admin only: per-group pre-drop announcement lead time
+  // 0 disables. Only applies to scheduled drops (not manual /drop).
+  bot.command('setannounce', async (ctx) => {
+    const user = extractUser(ctx);
+    if (!user || !isAdmin(user.userId)) return;
+    const g = config.groupChatId;
+    const arg = ctx.match?.trim();
+    if (!arg) {
+      const current = db.getGroupAnnounceMinutesBefore(database, g);
+      const label = current > 0 ? `${current}min before drop` : 'disabled';
+      await ctx.reply(`announce: ${label}\nusage: /setannounce <minutes>  (0 to disable)`);
+      return;
+    }
+    const n = parseInt(arg, 10);
+    if (isNaN(n) || n < 0) {
+      await ctx.reply('invalid value. use a non-negative integer in minutes (0 disables).');
+      return;
+    }
+    db.setGroupAnnounceMinutesBefore(database, g, n);
+    if (n === 0) {
+      await ctx.reply('✅ announcements disabled for this group.\nalready-materialized announce jobs stay queued — cancel them with /jobs rm if you want.');
+    } else {
+      await ctx.reply(`✅ announcements set to ${n}min before each scheduled drop.\napplies to slots materialized in the next 24h.`);
+    }
+  });
+
   // /schedule — admin only: list / add / rm / on / off recurring schedules
   // Usage:
   //   /schedule                             → list for active group
@@ -287,25 +346,28 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
         );
         return;
       }
+      const groupResolveDelay = db.getGroupResolveDelayMinutes(database, g);
+      const delayLabel = groupResolveDelay !== null
+        ? `${groupResolveDelay}min (group)`
+        : `${config.resolveDelayMinutes}min (env default)`;
       const lines = [`📅 schedules for ${title} (${schedules.length}):`, ''];
       for (const s of schedules) {
         const status = s.enabled ? '✓' : '✗ disabled';
-        const delay = `${s.resolve_delay_minutes}min`;
-        lines.push(`[${s.id}] ${s.days_of_week} @ ${s.time_utc} UTC · resolve ${delay} · ${status}`);
+        lines.push(`[${s.id}] ${s.days_of_week} @ ${s.time_utc} UTC · ${status}`);
       }
-      lines.push('', 'commands: /schedule add <days> <HH:MM> [delay] · rm <id> · on <id> · off <id>');
+      lines.push('', `resolve delay: ${delayLabel}  (change with /setresolvedelay <min>)`);
+      lines.push('commands: /schedule add <days> <HH:MM> · rm <id> · on <id> · off <id>');
       await ctx.reply(lines.join('\n'));
       return;
     }
 
     if (sub === 'add') {
       if (tokens.length < 3) {
-        await ctx.reply('usage: /schedule add <days> <HH:MM> [delay_minutes]\nexample: /schedule add mon,wed,fri 14:00 60');
+        await ctx.reply('usage: /schedule add <days> <HH:MM>\nexample: /schedule add mon,wed,fri 14:00\nresolve delay is set per-group with /setresolvedelay.');
         return;
       }
       const daysRaw = tokens[1];
       const timeRaw = tokens[2];
-      const delayRaw = tokens[3];
       const days = parseDaysOfWeek(daysRaw);
       const time = parseTimeUtc(timeRaw);
       if (!days) {
@@ -316,19 +378,13 @@ export function registerCommands(bot: Bot, database: Database.Database): void {
         await ctx.reply('invalid time. use HH:MM (24h UTC), e.g. 14:00 or 09:30.');
         return;
       }
-      let delay = config.resolveDelayMinutes;
-      if (delayRaw) {
-        const n = parseInt(delayRaw, 10);
-        if (isNaN(n) || n <= 0) {
-          await ctx.reply('invalid delay. use a positive integer in minutes.');
-          return;
-        }
-        delay = n;
-      }
+      // resolve_delay_minutes column kept for schema back-compat but no longer
+      // authoritative — doDrop reads the group-level setting at execution time.
+      const delay = db.getGroupResolveDelayMinutes(database, g) ?? config.resolveDelayMinutes;
       const daysCsv = days.join(',');
       const timeFmt = `${String(time.h).padStart(2, '0')}:${String(time.m).padStart(2, '0')}`;
       const id = db.insertSchedule(database, g, daysCsv, timeFmt, delay);
-      await ctx.reply(`✅ schedule [${id}] added: ${daysCsv} @ ${timeFmt} UTC · resolve ${delay}min · enabled`);
+      await ctx.reply(`✅ schedule [${id}] added: ${daysCsv} @ ${timeFmt} UTC · enabled\nresolve delay: ${delay}min (group-level, change with /setresolvedelay)`);
       return;
     }
 

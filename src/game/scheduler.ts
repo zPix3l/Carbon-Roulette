@@ -1,7 +1,9 @@
-import type { Bot } from 'grammy';
+import { InlineKeyboard, InputFile, type Bot } from 'grammy';
 import type Database from 'better-sqlite3';
 import * as db from '../db/queries.js';
 import { doDrop, doResolve, getTotalDays, type DropPayload } from './engine.js';
+import { formatDropAnnouncement, LEARN_URL } from './messages.js';
+import { generateBannerPNG } from './banner.js';
 
 // ---------------------------------------------------------------------------
 // Scheduler — persisted jobs + recurring schedules
@@ -98,14 +100,34 @@ function tick(bot: Bot, database: Database.Database): void {
 
     for (const s of schedules) {
       const slots = materializeSlots(s, now, MATERIALIZE_WINDOW_MS);
+      const announceMinutesBefore = db.getGroupAnnounceMinutesBefore(database, s.group_id);
+
       for (const runAt of slots) {
-        if (db.jobExistsForScheduleSlot(database, s.id, runAt)) continue;
-        const jobId = db.insertJob(database, s.group_id, 'drop', runAt, s.id, {
-          resolve_delay_minutes: s.resolve_delay_minutes,
-        });
-        console.log(`[scheduler] materialized drop job #${jobId} group=${s.group_id} run_at=${runAt} schedule=${s.id}`);
-        // Pre-schedule in-memory if within 24h (always true here)
-        schedulePendingJob(bot, database, db.getJobById(database, jobId)!);
+        // Drop job — schedules now inherit resolve delay from the group config at
+        // execution time (via doDrop → getGroupResolveDelayMinutes). We stop
+        // stamping a schedule-level delay into the payload so /setresolvedelay
+        // takes effect retroactively for already-materialized slots.
+        if (!db.jobExistsForScheduleSlot(database, s.id, runAt)) {
+          const jobId = db.insertJob(database, s.group_id, 'drop', runAt, s.id, null);
+          console.log(`[scheduler] materialized drop job #${jobId} group=${s.group_id} run_at=${runAt} schedule=${s.id}`);
+          schedulePendingJob(bot, database, db.getJobById(database, jobId)!);
+        }
+
+        // Companion announce job (only if group opted in via /setannounce N)
+        if (announceMinutesBefore > 0 && !db.announceExistsForScheduleDrop(database, s.id, runAt)) {
+          const announceRunAt = new Date(
+            Date.parse(runAt) - announceMinutesBefore * 60_000,
+          ).toISOString();
+          // Only materialize if the announce run time hasn't already passed by
+          // more than the catch-up window — otherwise it's pointless noise.
+          if (Date.parse(announceRunAt) > now.getTime() - CATCHUP_WINDOW_MS) {
+            const aId = db.insertJob(database, s.group_id, 'announce', announceRunAt, s.id, {
+              drop_run_at: runAt,
+            });
+            console.log(`[scheduler] materialized announce job #${aId} group=${s.group_id} run_at=${announceRunAt} drop=${runAt} schedule=${s.id}`);
+            schedulePendingJob(bot, database, db.getJobById(database, aId)!);
+          }
+        }
       }
     }
 
@@ -187,8 +209,13 @@ async function runJob(bot: Bot, database: Database.Database, job: db.ScheduledJo
   try {
     if (fresh.kind === 'drop') {
       await executeDrop(bot, database, fresh);
-    } else {
+    } else if (fresh.kind === 'resolve') {
       await executeResolve(bot, database, fresh);
+    } else if (fresh.kind === 'announce') {
+      await executeAnnounce(bot, database, fresh);
+    } else {
+      // Future-proof: unknown kind
+      db.markJobSkipped(database, fresh.id, `unknown kind: ${fresh.kind as string}`);
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -258,6 +285,76 @@ async function executeDrop(bot: Bot, database: Database.Database, job: db.Schedu
     schedulePendingJob(bot, database, resolveJob);
   }
   console.log(`[scheduler] drop #${job.id} done, resolve #${resolveJobId} scheduled at ${resolveAt}`);
+}
+
+async function executeAnnounce(bot: Bot, database: Database.Database, job: db.ScheduledJob): Promise<void> {
+  const groupId = job.group_id;
+
+  // Decode payload: expects { drop_run_at: ISO string }
+  let dropRunAt: Date | null = null;
+  if (job.payload) {
+    try {
+      const parsed = JSON.parse(job.payload) as { drop_run_at?: string };
+      if (parsed.drop_run_at) dropRunAt = new Date(parsed.drop_run_at);
+    } catch {
+      // fall through
+    }
+  }
+  if (!dropRunAt || isNaN(dropRunAt.getTime())) {
+    db.markJobSkipped(database, job.id, 'announce payload missing drop_run_at');
+    return;
+  }
+
+  // If the referenced drop has already happened, skip — announcing a past drop
+  // is nonsense. Manual /drop firing ahead of the schedule can also trigger this.
+  if (dropRunAt.getTime() <= Date.now()) {
+    db.markJobSkipped(database, job.id, 'drop already due, announce stale');
+    return;
+  }
+
+  // If the companion drop job isn't pending (skipped / canceled / failed), skip
+  // the announce too — no point teasing a drop that won't happen.
+  if (job.schedule_id !== null) {
+    const companionDrop = database.prepare(
+      `SELECT status FROM scheduled_jobs
+         WHERE schedule_id = ? AND kind = 'drop' AND run_at = ?
+         LIMIT 1`,
+    ).get(job.schedule_id, dropRunAt.toISOString()) as { status: string } | undefined;
+    if (companionDrop && companionDrop.status !== 'pending') {
+      db.markJobSkipped(database, job.id, `companion drop ${companionDrop.status}`);
+      return;
+    }
+  }
+
+  // Game-over guard: don't announce past the last round.
+  const currentDay = db.getCurrentDay(database, groupId);
+  const totalDays = getTotalDays();
+  if (currentDay >= totalDays) {
+    db.markJobSkipped(database, job.id, 'game over');
+    return;
+  }
+
+  const caption = formatDropAnnouncement(dropRunAt, new Date(), totalDays);
+  const keyboard = new InlineKeyboard().url('📚 LEARN', LEARN_URL);
+
+  try {
+    // Reuse the drop banner visual — reads the resolve delay from group config so
+    // the banner's "YOU HAVE X HOUR(S)" matches what the upcoming drop will use.
+    const resolveDelay =
+      db.getGroupResolveDelayMinutes(database, groupId) ?? 60;
+    const bannerBuf = await generateBannerPNG(resolveDelay);
+    await bot.api.sendPhoto(groupId, new InputFile(bannerBuf, 'banner.png'), {
+      caption,
+      reply_markup: keyboard,
+    });
+  } catch (err) {
+    db.markJobFailed(database, job.id, err instanceof Error ? err.message : String(err));
+    console.error(`[scheduler] announce #${job.id} failed:`, err);
+    return;
+  }
+
+  db.markJobDone(database, job.id);
+  console.log(`[scheduler] announce #${job.id} posted (drop at ${dropRunAt.toISOString()})`);
 }
 
 async function executeResolve(bot: Bot, database: Database.Database, job: db.ScheduledJob): Promise<void> {

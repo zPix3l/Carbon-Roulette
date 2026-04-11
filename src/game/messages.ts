@@ -306,6 +306,53 @@ export function formatStart(balance: number): string {
   ].join('\n');
 }
 
+// ---- Pre-drop announcement (posted X minutes before each scheduled drop) ----
+
+/**
+ * Format a pre-drop announcement. Uses the scheduled drop time (UTC) and
+ * the "now" reference to compute a friendly "Today at HH:MM UTC" /
+ * "Tomorrow at HH:MM UTC" / "Mon at HH:MM UTC" label.
+ */
+export function formatDropAnnouncement(
+  dropRunAt: Date,
+  now: Date,
+  totalDays: number,
+): string {
+  const hh = String(dropRunAt.getUTCHours()).padStart(2, '0');
+  const mm = String(dropRunAt.getUTCMinutes()).padStart(2, '0');
+
+  // Compare UTC calendar dates, not wall-clock deltas
+  const nowDay = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dropDay = Date.UTC(dropRunAt.getUTCFullYear(), dropRunAt.getUTCMonth(), dropRunAt.getUTCDate());
+  const dayDiff = Math.round((dropDay - nowDay) / (24 * 60 * 60 * 1000));
+
+  let whenLabel: string;
+  if (dayDiff <= 0) whenLabel = `Today at ${hh}:${mm} UTC`;
+  else if (dayDiff === 1) whenLabel = `Tomorrow at ${hh}:${mm} UTC`;
+  else {
+    const dowNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    whenLabel = `${dowNames[dropRunAt.getUTCDay()]} at ${hh}:${mm} UTC`;
+  }
+
+  return [
+    `🎮 Carbon Roulette.`,
+    ``,
+    `A carbon credit project drops in this chat.`,
+    `Your job: figure out if it's legit or a scam.`,
+    ``,
+    `Get it right → earn points.`,
+    `Get it wrong → lose points.`,
+    ``,
+    `${totalDays} rounds. ${totalDays} projects. One leaderboard.`,
+    ``,
+    `🕐 Next drop: ${whenLabel}`,
+    ``,
+    `When it drops, hit INVESTIGATE and make your call.`,
+    ``,
+    `Good luck. You'll need it.`,
+  ].join('\n');
+}
+
 // ---- Announcement (one-time teaser for the group) ----
 
 export function formatAnnouncement(nextDrop: string): string {

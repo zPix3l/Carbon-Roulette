@@ -47,10 +47,10 @@ Each Telegram group has fully isolated state. The active group is tracked global
 | `players` | global | Identity (telegram_id, username, display_name) |
 | `group_players` | per `(telegram_id, group_id)` | Balance, streak, wins, games_played, last_bailout |
 | `bets` | per `(telegram_id, project_day, group_id)` | UNIQUE constraint prevents double bet |
-| `group_state` | per `(group_id, key)` | Per-group k/v: `current_day`, `round_status`, `drop_message_id`, `group_title`, … |
+| `group_state` | per `(group_id, key)` | Per-group k/v: `current_day`, `round_status`, `drop_message_id`, `group_title`, `resolve_delay_minutes`, `announce_minutes_before`, … |
 | `bot_config` | global k/v | Currently only `group_chat_id` (active group) |
-| `schedules` | per `group_id` | Recurring drop schedules: `days_of_week` (CSV) × `time_utc` × `resolve_delay_minutes`, `enabled` flag |
-| `scheduled_jobs` | per `group_id` | Concrete job instances (`kind='drop'|'resolve'`, `run_at` ISO, `status='pending|done|failed|skipped'`). One-off (manual `/drop`) or materialized from a schedule (`schedule_id` set). |
+| `schedules` | per `group_id` | Recurring drop schedules: `days_of_week` (CSV) × `time_utc` × `enabled`. (`resolve_delay_minutes` column kept for schema back-compat but no longer authoritative — `doDrop` reads the group-level setting at execution time.) |
+| `scheduled_jobs` | per `group_id` | Concrete job instances (`kind='drop'|'resolve'|'announce'`, `run_at` ISO, `status='pending|done|failed|skipped'`). One-off (manual `/drop`) or materialized from a schedule (`schedule_id` set). |
 
 `src/db/schema.ts` includes a one-shot migration from the legacy single-tenant schema (detects old `game_state` table, moves all data under the saved or env-provided group_id, recreates `players`/`bets` with the new columns, drops `game_state`). Safe to re-run; idempotent.
 
@@ -71,9 +71,11 @@ All query functions in `src/db/queries.ts` take `groupId` as a parameter — nev
 ### Admin only (gated by `ADMIN_USER_ID`)
 | Cmd | Notes |
 |---|---|
-| `/drop [minutes]` | Post the next round. Optional arg overrides `RESOLVE_DELAY_MINUTES` for this round only. If sent inside a group chat that isn't the active one, **auto-switches** to that group first. Routed through `triggerManualDrop` (synchronous nudge — inserts a job AND runs it immediately). |
+| `/drop [minutes]` | Post the next round. Optional arg overrides the resolve delay **for this round only**. If sent inside a group chat that isn't the active one, **auto-switches** to that group first. Routed through `triggerManualDrop` (synchronous nudge — inserts a job AND runs it immediately). |
 | `/resolve` | Force-resolve the current open round. Cancels any pending resolve job for the group first. |
-| `/schedule list\|add\|rm\|on\|off` | Manage recurring drop schedules. `add <days> HH:MM [delay_min]` where `<days>` is CSV like `mon,wed,fri`. Times are UTC. |
+| `/schedule list\|add\|rm\|on\|off` | Manage recurring drop schedules. `add <days> HH:MM` where `<days>` is CSV like `mon,wed,fri`. Times are UTC. **Resolve delay is no longer a per-schedule arg** — set it per group with `/setresolvedelay`. |
+| `/setresolvedelay <min>` | Per-group resolve delay. Applies to all drops in this group (manual + scheduled). `/drop N` still overrides for one round. Persists across restarts. |
+| `/setannounce <min>` | Per-group pre-drop announcement lead time (minutes before each scheduled drop). `0` disables. Only applies to scheduled drops — not manual `/drop`. Materialized alongside drops during the 24h tick, posted as a photo with banner + LEARN button. |
 | `/jobs` / `/jobs rm <id>` | List pending jobs / cancel one (marks it `skipped` and clears the in-memory timer). |
 | `/announcement` | Post the one-time teaser to the active group |
 | `/status` | Active group, day, round status, player count, group ID |
@@ -92,6 +94,7 @@ The middleware in `commands.ts` opportunistically saves `group_title` into `grou
 1. A drop is triggered by either admin `/drop` (manual nudge) or a recurring schedule that the tick just materialized. Both paths go through `runJob → executeDrop` in `src/game/scheduler.ts`.
 2. `executeDrop` enforces the **single-open-round invariant**: if `round_status === 'open'` when the drop fires, it auto-resolves the previous round first and marks its pending resolve job `skipped: superseded by auto-resolve before next drop`.
 3. `doDrop` (`src/game/engine.ts`):
+   - Resolves the delay: **payload override > group-level `/setresolvedelay` > env `RESOLVE_DELAY_MINUTES`**
    - Increments `current_day` for the active group
    - Picks the project from `projects.json`
    - Generates the banner PNG, sends photo + caption + INVESTIGATE/LEARN inline keyboard to the group
@@ -107,10 +110,11 @@ The middleware in `commands.ts` opportunistically saves `group_title` into `grou
 ### Scheduler internals (`src/game/scheduler.ts`)
 
 - **Boot recovery:** `startScheduler()` loads all `pending` jobs and schedules them via `schedulePendingJob`. Jobs whose `run_at` is within the 4h catch-up window are executed immediately; jobs older than 4h are marked `skipped: stale on boot`.
-- **Tick:** every 60s (and once on boot) `tick()` materializes concrete drop jobs from active schedules for the next 24h, deduplicated via `jobExistsForScheduleSlot`. Also re-picks any pending jobs not already in flight (defense in depth).
+- **Tick:** every 60s (and once on boot) `tick()` materializes concrete drop jobs from active schedules for the next 24h, deduplicated via `jobExistsForScheduleSlot`. If the group has `announce_minutes_before > 0`, a companion `kind='announce'` job is also materialized at `drop_time − X min`, keyed on `schedule_id` + `payload.drop_run_at` (via `announceExistsForScheduleDrop`). Also re-picks any pending jobs not already in flight (defense in depth).
 - **inFlight map:** the scheduler reserves every job id in an in-memory `Map` **before** calling `runJob`, in both the catch-up and future-setTimeout branches, and clears it via `.finally()` only after execution completes. Without this, the boot-loop + immediate-tick combo would double-execute any catch-up job (bug was found during scheduler end-to-end testing on 2026-04-11 — see commit 8373450).
 - **Game-over guard:** if `current_day >= totalDays` when a drop fires, the scheduler disables the source schedule (`setScheduleEnabled(false)`) and marks the job `skipped: game over`.
 - **Manual nudge:** `/drop` calls `triggerManualDrop` which inserts the job AND calls `runJob` synchronously, so the admin doesn't wait up to 60s for the next tick.
+- **Announce execution:** `executeAnnounce` decodes `payload.drop_run_at`, renders `formatDropAnnouncement` (dynamic "Today/Tomorrow/Weekday at HH:MM UTC"), and posts a photo + LEARN-only keyboard. Skips if the drop is already due, if the companion drop job is no longer pending (canceled/failed/skipped), or if the game is over. All announces are opt-in per group via `/setannounce <min>`.
 
 ## Scoring
 

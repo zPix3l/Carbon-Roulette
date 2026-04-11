@@ -14,6 +14,9 @@ export function initDb(): Database.Database {
   // Migrate old single-tenant schema if detected
   migrateIfNeeded(db);
 
+  // Migrate scheduled_jobs.kind CHECK to allow 'announce' if needed
+  migrateScheduledJobsKind(db);
+
   // Create tables (idempotent)
   db.exec(`
     -- Player identity (global, one row per Telegram user)
@@ -82,7 +85,7 @@ export function initDb(): Database.Database {
     CREATE TABLE IF NOT EXISTS scheduled_jobs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       group_id INTEGER NOT NULL,
-      kind TEXT NOT NULL CHECK(kind IN ('drop','resolve')),
+      kind TEXT NOT NULL CHECK(kind IN ('drop','resolve','announce')),
       run_at TEXT NOT NULL,                 -- ISO 8601 UTC
       status TEXT NOT NULL DEFAULT 'pending'
         CHECK(status IN ('pending','done','failed','skipped')),
@@ -100,6 +103,55 @@ export function initDb(): Database.Database {
   `);
 
   return db;
+}
+
+// ---------------------------------------------------------------------------
+// Migration: widen scheduled_jobs.kind CHECK to include 'announce'
+// SQLite CHECK constraints are baked into the table definition, so we detect
+// the old constraint by inspecting sqlite_master.sql and recreate the table
+// if needed. Idempotent: only runs when the old CHECK is present.
+// ---------------------------------------------------------------------------
+
+function migrateScheduledJobsKind(db: Database.Database): void {
+  const row = db.prepare(
+    `SELECT sql FROM sqlite_master WHERE type='table' AND name='scheduled_jobs'`,
+  ).get() as { sql: string } | undefined;
+  if (!row) return; // table doesn't exist yet — fresh install will get the new CHECK
+
+  // Already widened?
+  if (row.sql.includes("'announce'")) return;
+
+  console.log("[migration] widening scheduled_jobs.kind CHECK to include 'announce'...");
+
+  db.transaction(() => {
+    db.exec(`
+      CREATE TABLE scheduled_jobs_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        group_id INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('drop','resolve','announce')),
+        run_at TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending','done','failed','skipped')),
+        schedule_id INTEGER,
+        payload TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        executed_at TEXT,
+        error TEXT,
+        FOREIGN KEY (schedule_id) REFERENCES schedules(id) ON DELETE SET NULL
+      );
+      INSERT INTO scheduled_jobs_new
+        SELECT id, group_id, kind, run_at, status, schedule_id, payload, created_at, executed_at, error
+        FROM scheduled_jobs;
+      DROP TABLE scheduled_jobs;
+      ALTER TABLE scheduled_jobs_new RENAME TO scheduled_jobs;
+      CREATE INDEX IF NOT EXISTS idx_jobs_pending_run_at
+        ON scheduled_jobs(status, run_at);
+      CREATE INDEX IF NOT EXISTS idx_jobs_schedule_run_at
+        ON scheduled_jobs(schedule_id, run_at);
+    `);
+  })();
+
+  console.log('[migration] scheduled_jobs.kind CHECK widened.');
 }
 
 // ---------------------------------------------------------------------------

@@ -195,6 +195,36 @@ export function getCurrentDay(db: Database.Database, groupId: number): number {
   return parseInt(getGroupState(db, groupId, 'current_day'), 10) || 0;
 }
 
+/**
+ * Per-group resolve delay (minutes). Returns null if never set so callers can
+ * fall back to the env/default. Stored under group_state key 'resolve_delay_minutes'.
+ */
+export function getGroupResolveDelayMinutes(db: Database.Database, groupId: number): number | null {
+  const raw = getGroupState(db, groupId, 'resolve_delay_minutes');
+  if (!raw) return null;
+  const n = parseInt(raw, 10);
+  return isNaN(n) || n <= 0 ? null : n;
+}
+
+export function setGroupResolveDelayMinutes(db: Database.Database, groupId: number, minutes: number): void {
+  setGroupState(db, groupId, 'resolve_delay_minutes', String(minutes));
+}
+
+/**
+ * Per-group announce lead time (minutes before the scheduled drop).
+ * 0 disables announcements. Stored under group_state key 'announce_minutes_before'.
+ */
+export function getGroupAnnounceMinutesBefore(db: Database.Database, groupId: number): number {
+  const raw = getGroupState(db, groupId, 'announce_minutes_before');
+  if (!raw) return 0;
+  const n = parseInt(raw, 10);
+  return isNaN(n) || n < 0 ? 0 : n;
+}
+
+export function setGroupAnnounceMinutesBefore(db: Database.Database, groupId: number, minutes: number): void {
+  setGroupState(db, groupId, 'announce_minutes_before', String(minutes));
+}
+
 /** List all known group IDs (any group that has at least one group_state or group_players row). */
 export function getKnownGroups(db: Database.Database): { group_id: number; current_day: number; players: number }[] {
   return db.prepare(`
@@ -262,10 +292,12 @@ export function setScheduleEnabled(db: Database.Database, id: number, enabled: b
 
 // ---- Scheduler: concrete jobs ----
 
+export type JobKind = 'drop' | 'resolve' | 'announce';
+
 export interface ScheduledJob {
   id: number;
   group_id: number;
-  kind: 'drop' | 'resolve';
+  kind: JobKind;
   run_at: string;                 // ISO 8601 UTC
   status: 'pending' | 'done' | 'failed' | 'skipped';
   schedule_id: number | null;
@@ -278,7 +310,7 @@ export interface ScheduledJob {
 export function insertJob(
   db: Database.Database,
   groupId: number,
-  kind: 'drop' | 'resolve',
+  kind: JobKind,
   runAt: string,
   scheduleId: number | null,
   payload: Record<string, unknown> | null,
@@ -327,8 +359,27 @@ export function getPendingResolveJobForGroup(db: Database.Database, groupId: num
 
 export function jobExistsForScheduleSlot(db: Database.Database, scheduleId: number, runAt: string): boolean {
   const row = db.prepare(`
-    SELECT 1 FROM scheduled_jobs WHERE schedule_id = ? AND run_at = ? LIMIT 1
+    SELECT 1 FROM scheduled_jobs WHERE schedule_id = ? AND run_at = ? AND kind = 'drop' LIMIT 1
   `).get(scheduleId, runAt);
+  return !!row;
+}
+
+/**
+ * Check whether an announce job already exists for a given schedule + companion drop time.
+ * We key announces by schedule_id and the drop_run_at stored in payload, so a run_at shift
+ * (e.g. admin changed announce_minutes_before) creates a fresh announce rather than duplicating.
+ */
+export function announceExistsForScheduleDrop(
+  db: Database.Database,
+  scheduleId: number,
+  dropRunAt: string,
+): boolean {
+  const row = db.prepare(`
+    SELECT 1 FROM scheduled_jobs
+    WHERE schedule_id = ? AND kind = 'announce'
+      AND json_extract(payload, '$.drop_run_at') = ?
+    LIMIT 1
+  `).get(scheduleId, dropRunAt);
   return !!row;
 }
 

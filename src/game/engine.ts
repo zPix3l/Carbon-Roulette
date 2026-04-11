@@ -158,7 +158,14 @@ export async function doDrop(
   groupId: number,
   payload?: DropPayload,
 ): Promise<{ ok: boolean; message: string; resolveDelayMinutes: number }> {
-  const resolveDelayMinutes = payload?.resolve_delay_minutes ?? config.resolveDelayMinutes;
+  // Resolution precedence (per-drop override first, then per-group config, then env default):
+  //   1. payload.resolve_delay_minutes — /drop 30 or schedule one-shot payload
+  //   2. group_state.resolve_delay_minutes — /setresolvedelay
+  //   3. config.resolveDelayMinutes — env var
+  const resolveDelayMinutes =
+    payload?.resolve_delay_minutes
+    ?? db.getGroupResolveDelayMinutes(database, groupId)
+    ?? config.resolveDelayMinutes;
   const currentDay = db.getCurrentDay(database, groupId);
   const nextDay = currentDay + 1;
   const totalDays = getTotalDays();
