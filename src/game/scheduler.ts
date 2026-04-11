@@ -138,15 +138,19 @@ function schedulePendingJob(bot: Bot, database: Database.Database, job: db.Sched
       console.warn(`[scheduler] job #${job.id} skipped: stale (${Math.floor(-delta / 60000)}min late)`);
       return;
     }
-    // Catch up immediately
-    void runJob(bot, database, job);
+    // Catch up immediately. Reserve in inFlight BEFORE starting runJob so a
+    // concurrent tick() can't re-pick this job while runJob is still in flight.
+    // The sentinel timeout fires harmlessly; the entry is cleared in finally().
+    inFlight.set(job.id, setTimeout(() => {}, 0));
+    void runJob(bot, database, job).finally(() => inFlight.delete(job.id));
     return;
   }
 
-  // Future: schedule a setTimeout, keep a pointer for cancellation
+  // Future: schedule a setTimeout, keep the pointer in inFlight until runJob
+  // actually completes (not just until the timeout fires) so a concurrent tick()
+  // can't double-schedule it during execution.
   const timeout = setTimeout(() => {
-    inFlight.delete(job.id);
-    void runJob(bot, database, job);
+    void runJob(bot, database, job).finally(() => inFlight.delete(job.id));
   }, delta);
   inFlight.set(job.id, timeout);
 }
