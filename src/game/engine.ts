@@ -128,6 +128,14 @@ export async function doResolve(
 
   // Update group drop message: show CLOSED, remove buttons
   if (dropMsgId) {
+    // Unpin the drop first — the round is over, no reason to keep it pinned.
+    // Non-fatal: if unpin fails (permission lost, already unpinned, etc.) we
+    // still try to edit the caption.
+    try {
+      await bot.api.unpinChatMessage(groupId, parseInt(dropMsgId, 10));
+    } catch (err) {
+      console.log(`[resolve] failed to unpin drop message (${dropMsgId}):`, err);
+    }
     try {
       const betCount = db.getBetCountForDay(database, currentDay, groupId);
       const closedText = formatDropGroupClosed(project, betCount);
@@ -209,6 +217,19 @@ export async function doDrop(
     .url('🔍 INVESTIGATE', `https://t.me/${botUsername}?start=play_${nextDay}`)
     .url('📚 LEARN', LEARN_URL);
 
+  // Unpin any previous pre-drop announcement for this group before posting.
+  // The announce's job was to notify via the pin event; now that the drop is
+  // here, clean up the pin so the chat isn't cluttered. Non-fatal on failure.
+  const pinnedAnnounceId = db.getGroupState(database, groupId, 'pinned_announce_message_id');
+  if (pinnedAnnounceId) {
+    try {
+      await bot.api.unpinChatMessage(groupId, parseInt(pinnedAnnounceId, 10));
+    } catch (err) {
+      console.log(`[drop] failed to unpin previous announce (${pinnedAnnounceId}):`, err);
+    }
+    db.setGroupState(database, groupId, 'pinned_announce_message_id', '');
+  }
+
   try {
     const bannerBuf = await generateBannerPNG(resolveDelayMinutes);
     const sent = await bot.api.sendPhoto(groupId, new InputFile(bannerBuf, 'banner.png'), {
@@ -218,6 +239,14 @@ export async function doDrop(
     // Store message_id for verdict reply + live counter updates
     db.setGroupState(database, groupId, 'drop_message_id', String(sent.message_id));
     console.log(`[drop] group ${groupId} day ${nextDay} posted (msg_id: ${sent.message_id})`);
+
+    // Pin the drop with notification — same rationale as announce: reach muted
+    // members. The pin will be removed when doResolve runs.
+    try {
+      await bot.api.pinChatMessage(groupId, sent.message_id);
+    } catch (err) {
+      console.log(`[drop] failed to pin drop message (bot needs can_pin_messages):`, err);
+    }
   } catch (err) {
     console.error('failed to send drop to group:', err);
     return { ok: false, message: `day advanced to ${nextDay} but failed to post in group: ${err}`, resolveDelayMinutes };
