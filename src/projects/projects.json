@@ -329,9 +329,9 @@
     "country": "Tanzania",
     "method": "SOIL_CARBON",
     "methodName": "Soil Carbon Sequestration",
-    "standard": "American Carbon Registry (ACR)",
-    "standardId": "ACR",
-    "methodologyId": "Soil Enrichment Protocol",
+    "standard": "Verra VCS",
+    "standardId": "VCS",
+    "methodologyId": "VM0042",
     "volume": 14212,
     "price": 10.16,
     "yield": 1.1,
@@ -341,7 +341,7 @@
     "description": "Soil carbon enhancement through conservation agriculture practices in Tanzania. Project covers 12,920 hectares. Baseline established with stratified soil sampling. Practices include no-till, crop rotation, and organic amendments.",
     "isLegit": true,
     "violations": [],
-    "verdictExplanation": "American Carbon Registry (ACR) is a valid certifier for soil carbon sequestration projects. Soil Enrichment Protocol is the correct methodology for this project type. $10.16/tonne falls within the documented range ($6.51–11.02). yield of 1.1 tCO₂/ha/yr is within the documented range (0.73–1.83).",
+    "verdictExplanation": "Verra VCS is a valid certifier for soil carbon sequestration projects. VM0042 is the correct methodology for this project type. $10.16/tonne falls within the documented range ($6.51–11.02). yield of 1.1 tCO₂/ha/yr is within the documented range (0.73–1.83).",
     "difficulty": 1
   },
   {
@@ -646,7 +646,7 @@
     "methodName": "Improved Cookstoves",
     "standard": "CDM (UNFCCC)",
     "standardId": "CDM",
-    "methodologyId": "AMS-I.E",
+    "methodologyId": "AMS-II.G",
     "volume": 309145,
     "price": 5.06,
     "yield": 5.7,
@@ -655,7 +655,7 @@
     "description": "Clean cookstove program in Rwanda replacing traditional three-stone fires. Thermal efficiency independently tested. Adoption tracked through household surveys and sales records. Non-renewable biomass fraction based on national forest inventory data.",
     "isLegit": true,
     "violations": [],
-    "verdictExplanation": "CDM (UNFCCC) is a valid certifier for improved cookstoves projects. AMS-I.E is the correct methodology for this project type. $5.06/tonne falls within the documented range ($4.75–8.55). yield of 5.7 tCO₂e/stove/yr is within the documented range (3–9).",
+    "verdictExplanation": "CDM (UNFCCC) is a valid certifier for improved cookstoves projects. AMS-II.G is the correct methodology for this project type. $5.06/tonne falls within the documented range ($4.75–8.55). yield of 5.7 tCO₂e/stove/yr is within the documented range (3–9).",
     "difficulty": 1
   },
   {

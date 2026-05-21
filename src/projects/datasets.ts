@@ -643,10 +643,36 @@ export interface MethodologyConstraint {
   reason?: string;
 }
 
+/**
+ * North American countries — used for protocols whose names/scopes explicitly
+ * restrict them to the U.S. and/or Canada (CAR, ACR US-centric protocols).
+ */
+export const NORTH_AMERICA_COUNTRIES: string[] = ['United States', 'Canada'];
+
 export const METHODOLOGY_CONSTRAINTS: Record<string, MethodologyConstraint> = {
   SHAMBA: {
     countries: SSA_COUNTRIES,
     reason: 'designed for smallholder agriculture in sub-Saharan Africa',
+  },
+  // CAR Biochar — name literally restricts scope to US/Canada
+  'U.S. and Canada Biochar v1.0': {
+    countries: NORTH_AMERICA_COUNTRIES,
+    reason: 'CAR Biochar protocol scoped to the U.S. and Canada',
+  },
+  // ACR Soil Enrichment — developed with Indigo Ag for US/Canada row-crop ag.
+  // Not formally restricted, but de facto applied only in North America.
+  'Soil Enrichment Protocol': {
+    countries: NORTH_AMERICA_COUNTRIES,
+    reason: 'ACR Soil Enrichment Protocol designed for U.S./Canada row-crop agriculture',
+  },
+  // CAR Forest protocols are U.S.-only by protocol scope
+  'CAR U.S. Forest Projects Protocol': {
+    countries: ['United States'],
+    reason: 'CAR U.S. Forest Projects Protocol — U.S.-only',
+  },
+  'CAR Forest Projects Protocol': {
+    countries: ['United States'],
+    reason: 'CAR forest protocol — U.S.-only',
   },
 };
 
