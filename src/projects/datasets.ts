@@ -616,3 +616,65 @@ export function getInvalidStandards(method: MethodId): StandardId[] {
 export function isValidStandard(method: MethodId, standard: StandardId): boolean {
   return SCOPE_MATRIX[method][standard] === 'YES';
 }
+
+// ============================================================
+// METHODOLOGY CONSTRAINTS — applicability rules per methodology ID
+// Some methodologies are scope-restricted beyond the standard/method matrix
+// (geography, smallholder-only, etc.). The scope matrix alone isn't enough.
+// ============================================================
+
+/**
+ * Countries where the SHAMBA tool's default parameters (RothC + IPCC defaults
+ * calibrated for tropical African smallholder systems) have documented
+ * applicability. Plan Vivo's PT001 / SHAMBA approved-method was developed at
+ * U. Edinburgh / CGIAR-CCAFS for smallholder farmers in sub-Saharan Africa.
+ * Using SHAMBA outside this scope (e.g. industrial cropland in Brazil/China)
+ * is a methodology-scope violation a real auditor would flag.
+ */
+export const SSA_COUNTRIES: string[] = [
+  'Kenya', 'Tanzania', 'Uganda', 'Malawi', 'Ethiopia',
+  'Rwanda', 'Ghana', 'Mozambique', 'Madagascar',
+];
+
+export interface MethodologyConstraint {
+  /** If set, the methodology only applies in these countries. */
+  countries?: string[];
+  /** Plain-English reason, for verdict text and audits. */
+  reason?: string;
+}
+
+export const METHODOLOGY_CONSTRAINTS: Record<string, MethodologyConstraint> = {
+  SHAMBA: {
+    countries: SSA_COUNTRIES,
+    reason: 'designed for smallholder agriculture in sub-Saharan Africa',
+  },
+};
+
+/**
+ * Methodology IDs valid for this (method, standard) at a given country.
+ * Filters out methodologies whose constraints exclude the country.
+ */
+export function getEligibleMethodologyIds(
+  method: MethodId,
+  standard: StandardId,
+  country: string,
+): string[] {
+  const ids = METHODS[method].methodologyIds[standard] ?? [];
+  return ids.filter(id => {
+    const c = METHODOLOGY_CONSTRAINTS[id];
+    if (!c) return true;
+    if (c.countries && !c.countries.includes(country)) return false;
+    return true;
+  });
+}
+
+/**
+ * Standards that have at least one eligible methodology for (method, country).
+ * Use this instead of getValidStandards when the country is known, to avoid
+ * picking a standard whose only methodology is scope-excluded.
+ */
+export function getValidStandardsForCountry(method: MethodId, country: string): StandardId[] {
+  return getValidStandards(method).filter(
+    std => getEligibleMethodologyIds(method, std, country).length > 0,
+  );
+}

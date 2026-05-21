@@ -426,9 +426,9 @@
     "country": "China",
     "method": "ARR",
     "methodName": "Afforestation / Reforestation (ARR)",
-    "standard": "Plan Vivo",
-    "standardId": "PLAN_VIVO",
-    "methodologyId": "SHAMBA",
+    "standard": "Verra VCS",
+    "standardId": "VCS",
+    "methodologyId": "VM0047",
     "volume": 155675,
     "price": 13.52,
     "yield": 14.2,
@@ -438,7 +438,7 @@
     "description": "Reforestation of former agricultural land in China using mixed indigenous species. 10,963 hectares under management. Planting densities follow regional forestry guidelines. Permanent sample plots established for biomass measurement.",
     "isLegit": true,
     "violations": [],
-    "verdictExplanation": "Plan Vivo is a valid certifier for afforestation / reforestation (arr) projects. SHAMBA is the correct methodology for this project type. $13.52/tonne falls within the documented range ($12.05–15.74). yield of 14.2 tCO₂/ha/yr is within the documented range (temperate) (5.5–16.5).",
+    "verdictExplanation": "Verra VCS is a valid certifier for afforestation / reforestation (arr) projects. VM0047 is the correct methodology for this project type. $13.52/tonne falls within the documented range ($12.05–15.74). yield of 14.2 tCO₂/ha/yr is within the documented range (temperate) (5.5–16.5).",
     "difficulty": 1
   },
   {

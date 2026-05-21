@@ -9,7 +9,8 @@ import { fileURLToPath } from 'url';
 import {
   METHODS, SCOPE_MATRIX, STANDARD_NAMES, AUDITOR_NAMES, PROJECT_NAME_PARTS,
   WRONG_METHODOLOGY_MAP, IMPOSSIBLE_COUNTRIES, BIOME_YIELDS, COUNTRY_BIOME,
-  getValidStandards, getInvalidStandards,
+  getValidStandards, getInvalidStandards, getValidStandardsForCountry,
+  getEligibleMethodologyIds,
   type MethodId, type StandardId, type ViolationType, type YieldRange,
 } from './datasets.js';
 
@@ -68,14 +69,20 @@ function generateName(method: MethodId): string {
   return `${prefix} ${methodWord} ${suffix}`;
 }
 
-// Get a valid methodology ID string for display
-function getMethodologyDisplay(standard: StandardId, method: MethodId): string {
-  const ids = METHODS[method].methodologyIds[standard];
-  if (ids && ids.length > 0) return pick(ids);
-  // Fallback: use the first available standard's ID
+// Get a valid methodology ID string for display.
+// If `country` is provided, filters by per-methodology applicability
+// constraints (e.g. SHAMBA → sub-Saharan Africa only).
+function getMethodologyDisplay(standard: StandardId, method: MethodId, country?: string): string {
+  const ids = country
+    ? getEligibleMethodologyIds(method, standard, country)
+    : METHODS[method].methodologyIds[standard] ?? [];
+  if (ids.length > 0) return pick(ids);
+  // Fallback: try other valid standards (country-filtered when possible)
   for (const s of getValidStandards(method)) {
-    const fallback = METHODS[method].methodologyIds[s];
-    if (fallback && fallback.length > 0) return pick(fallback);
+    const fallback = country
+      ? getEligibleMethodologyIds(method, s, country)
+      : METHODS[method].methodologyIds[s] ?? [];
+    if (fallback.length > 0) return pick(fallback);
   }
   return 'N/A';
 }
@@ -99,11 +106,15 @@ function pickYieldRangeForCountry(method: MethodId, country: string): YieldRange
 
 function generateLegitProject(id: number, day: number, method: MethodId): Project {
   const m = METHODS[method];
-  const validStandards = getValidStandards(method);
-  const standardId = pick(validStandards);
   const country = pick(m.countries);
+  // Pick country first, then filter standards to those with a methodology
+  // that's actually applicable in this country (e.g. SHAMBA is SSA-only).
+  // Falls back to the unfiltered set if no eligible combo exists.
+  const eligibleStandards = getValidStandardsForCountry(method, country);
+  const standardPool = eligibleStandards.length > 0 ? eligibleStandards : getValidStandards(method);
+  const standardId = pick(standardPool);
   const price = randBetween(m.priceRange.min, m.priceRange.max);
-  const methodologyId = getMethodologyDisplay(standardId, method);
+  const methodologyId = getMethodologyDisplay(standardId, method, country);
   const auditor = pick(AUDITOR_NAMES);
 
   // Yield and volume
@@ -332,7 +343,7 @@ function injectMediumViolation(p: Project): void {
       p.violations.push({
         type: 'WRONG_METHODOLOGY_ID',
         field: 'methodologyId',
-        explanation: `${w.id} is ${METHODS[w.realMethod].name}'s methodology, not ${p.methodName}'s. the correct methodology would be ${getMethodologyDisplay(p.standardId, p.method)}.`,
+        explanation: `${w.id} is ${METHODS[w.realMethod].name}'s methodology, not ${p.methodName}'s. the correct methodology would be ${getMethodologyDisplay(p.standardId, p.method, p.country)}.`,
       });
       p.methodologyId = w.id;
     }
